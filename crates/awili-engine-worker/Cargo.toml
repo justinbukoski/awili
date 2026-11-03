@@ -1,0 +1,29 @@
+[package]
+name = "awili-engine-worker"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+# D2-u1: awili-engine as an `awili_work::EngineWorker` — the second engine
+# behind the D1 seam. Owns ONLY the channel bridge (WorkCmd/WorkEvent <->
+# the adopted awili-seam composition); the turn loop, authorization, tools,
+# and context all stay in the gated crates.
+
+[dependencies]
+awili-work = { path = "../awili-work" }
+awili-seam = { path = "../awili-seam" }
+awili-engine = { path = "../awili-engine" }
+awili-engine-log = { path = "../awili-engine-log" }
+awili-engine-authz = { path = "../awili-engine-authz" }
+awili-tools = { path = "../awili-tools" }
+serde_json = { workspace = true }
+async-channel = { workspace = true }
+# RC1-I3-FIX3: Unicode general categories for the approval card's path
+# allowlist (already in the workspace graph through gpui/rustybuzz).
+unicode-properties = { version = "0.1.4", default-features = false, features = ["general-category"] }
+
+[dev-dependencies]
+tempfile = "3"
+# Unit 5 owner tests: the shared test-authority fixture (the established
+# dev-only feature edge; never the production graph).
+awili-engine-log = { path = "../awili-engine-log", features = ["test-authority"] }

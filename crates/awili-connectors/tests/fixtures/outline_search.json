@@ -1,0 +1,25 @@
+{
+  "data": [
+    {
+      "document": {
+        "id": "doc-hit-001",
+        "title": "First Hit",
+        "url": "/document/doc-hit-001"
+      }
+    },
+    {
+      "document": {
+        "id": "doc-hit-002",
+        "title": "Second Hit",
+        "url": null
+      }
+    },
+    {
+      "document": {
+        "id": "doc-hit-003",
+        "title": "Third Hit",
+        "url": "/document/doc-hit-003"
+      }
+    }
+  ]
+}

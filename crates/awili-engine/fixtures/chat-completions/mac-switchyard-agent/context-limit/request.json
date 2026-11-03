@@ -1,0 +1,11 @@
+{
+  "model": "switchyard-agent",
+  "stream": true,
+  "max_tokens": 64,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Summarize: word0 ... word301464 (ELIDED 3205004 chars in fixture request; response is verbatim)"
+    }
+  ]
+}

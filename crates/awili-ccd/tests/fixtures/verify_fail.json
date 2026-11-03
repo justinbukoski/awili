@@ -1,0 +1,1 @@
+{"passed":false,"profile":"rust_check","detail":"error[E0425]: cannot find value `foo` in this scope"}

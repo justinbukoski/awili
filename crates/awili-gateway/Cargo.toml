@@ -1,0 +1,25 @@
+[package]
+name = "awili-gateway"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+awili-work = { path = "../awili-work" }
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Blocking REST client for the gateway's `/api/*` surface (Phase C `rest` module).
+# Mirrors awili-hermes's blocking-reqwest transport; independent of the WS path.
+reqwest.workspace = true
+# rustls over native-tls (Owner, 2026-08-13): pure-Rust build so the Linux
+# target needs no system OpenSSL headers — the wall the 2026-08-12 Spark
+# rescue branch hit. NATIVE ROOTS, not webpki-roots: webpki bundles Mozilla's
+# CA list and IGNORES the OS trust store, which would silently reject the
+# fleet's own step-ca-issued certs. This keeps the system trust store.
+tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
+url = "2"
+
+[dev-dependencies]

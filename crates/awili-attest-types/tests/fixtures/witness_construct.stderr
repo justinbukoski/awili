@@ -1,0 +1,25 @@
+warning: unreachable expression
+ --> tests/fixtures/witness_construct.rs:8:21
+  |
+7 |         origin: unimplemented!(),
+  |                 ---------------- any code following this expression is unreachable
+8 |         generation: unimplemented!(),
+  |                     ^^^^^^^^^^^^^^^^ unreachable expression
+  |
+  = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+error[E0451]: fields `origin`, `generation`, `setup_id`, `pinned_requirement` and `_brand` of struct `InstallOriginWitness` are private
+  --> tests/fixtures/witness_construct.rs:7:9
+   |
+ 6 |     let _w = awili_attest_types::InstallOriginWitness {
+   |              ---------------------------------------- in this type
+ 7 |         origin: unimplemented!(),
+   |         ^^^^^^ private field
+ 8 |         generation: unimplemented!(),
+   |         ^^^^^^^^^^ private field
+ 9 |         setup_id: unimplemented!(),
+   |         ^^^^^^^^ private field
+10 |         pinned_requirement: unimplemented!(),
+   |         ^^^^^^^^^^^^^^^^^^ private field
+11 |         _brand: std::marker::PhantomData,
+   |         ^^^^^^ private field

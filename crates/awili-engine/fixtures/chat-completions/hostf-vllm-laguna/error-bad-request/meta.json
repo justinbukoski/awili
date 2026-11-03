@@ -1,0 +1,13 @@
+{
+  "scenario": "error-bad-request",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.83:8000/v1/chat/completions",
+  "model": "laguna-s-2.1-nvfp4",
+  "captured_at": 1786580651,
+  "http_status": 400,
+  "sse_event_count": 0,
+  "saw_done_sentinel": false,
+  "response_bytes": 590,
+  "capture_error": "HTTPError 400",
+  "note": "Malformed request (required `messages` omitted) -> HTTP 400 error envelope {error:{message,type}}. Non-streaming: the server rejects before opening the SSE stream."
+}

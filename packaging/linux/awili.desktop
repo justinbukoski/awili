@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Awili
+GenericName=AI workspace
+Comment=A desktop AI workspace
+Exec=@BINDIR@/awili-app
+Icon=awili
+Terminal=false
+Categories=Utility;Development;
+StartupWMClass=awili

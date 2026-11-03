@@ -1,0 +1,9 @@
+{
+  "scenario": "06b-malformed-midstream",
+  "dialect": "chat-completions",
+  "endpoint": "synthetic",
+  "model": "qwen3:8b",
+  "captured_at": 1786581000,
+  "synthetic": true,
+  "note": "SYNTHETIC (2026-08-13): a syntactically-invalid frame MID-stream, with valid frames and [DONE] after it — the true malformed-provider-frame case. Authored because the original 06 fixture is truncation-shaped (torn tail, unterminated string, no frames after), which the codec now correctly classifies as StreamTruncated per the REAL lightning cancellation capture. 06 stays immutable as the torn-tail regression fixture."
+}

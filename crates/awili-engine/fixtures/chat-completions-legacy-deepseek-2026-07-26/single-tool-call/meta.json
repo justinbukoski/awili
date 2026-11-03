@@ -1,0 +1,13 @@
+{
+  "scenario": "single-tool-call",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.83:8083/v1/chat/completions",
+  "model": "deepseek-v4-flash",
+  "captured_at": 1785090737,
+  "http_status": 200,
+  "sse_event_count": 32,
+  "saw_done_sentinel": true,
+  "response_bytes": 6353,
+  "capture_error": null,
+  "note": "Streaming tool-call assembly: tool_calls delta with function.name then incremental function.arguments; finish_reason=tool_calls."
+}

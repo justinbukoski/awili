@@ -1,0 +1,23 @@
+[package]
+name = "awili-builtins"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+
+# C2-owned IO adapter for builtin fs tools (C2-u4). Depends DOWN on the
+# pure defs/parse (awili-tools), the C3 enforcement crate
+# (awili-engine-sandbox), and B2 (awili-engine-log). C3 gains no knowledge
+# of C2 tool names or schemas (Codex u4 design finding 3).
+[dependencies]
+awili-engine = { path = "../awili-engine" }
+awili-engine-log = { path = "../awili-engine-log" }
+awili-engine-sandbox = { path = "../awili-engine-sandbox" }
+awili-tools = { path = "../awili-tools" }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+# Unit 4 (design r7): shared test-authority fixture for this package's test
+# targets. Dev-only — never in the production feature graph.
+awili-engine-log = { path = "../awili-engine-log", features = ["test-authority"] }

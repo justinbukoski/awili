@@ -1,0 +1,11 @@
+{
+  "scenario": "cancellation",
+  "dialect": "chat-completions",
+  "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+  "model": "switchyard-agent",
+  "captured_at": 1786580675,
+  "sse_event_count": 18,
+  "saw_done_sentinel": false,
+  "synthetic": false,
+  "note": "REAL client cancel: socket closed after ~4KB; stream truncated without [DONE]."
+}

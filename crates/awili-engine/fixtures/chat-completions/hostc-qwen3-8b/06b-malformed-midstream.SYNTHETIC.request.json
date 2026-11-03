@@ -1,0 +1,7 @@
+{
+  "model": "qwen3:8b",
+  "stream": true,
+  "note_request_is_synthetic": "SYNTHETIC fixture: no real request produced these bytes; this stub exists because a scenario without a request is not evidence (B4 strict discovery, 2026-08-13).",
+  "messages": [{"role": "user", "content": "Read the notes file."}],
+  "tools": [{"type": "function", "function": {"name": "read_file", "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}}]
+}

@@ -1,0 +1,17 @@
+[package]
+name = "awili-persist"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+dirs.workspace = true
+awili-config = { path = "../awili-config" }
+uuid.workspace = true
+chrono.workspace = true
+base64.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+awili-winacl = { path = "../awili-winacl" }

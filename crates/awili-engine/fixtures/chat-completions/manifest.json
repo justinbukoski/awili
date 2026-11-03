@@ -1,0 +1,79 @@
+{
+  "dialect": "chat-completions",
+  "captured_at": 1786061500,
+  "generated_by": "fixtures/capture.py (meta backfilled 2026-08-06, arbitration merge)",
+  "servers": {
+    "hostc-qwen3-8b": {
+      "endpoint": "http://10.77.68.86:11434/v1/chat/completions",
+      "model": "qwen3:8b",
+      "scenarios": [
+        "01-plain-turn",
+        "02-single-tool-call",
+        "03-parallel-tool-calls",
+        "04-tool-continuation",
+        "05-cancellation",
+        "07-context-limit",
+        "06b-malformed-midstream (SYNTHETIC, added 2026-08-13)"
+      ],
+      "historical": true,
+      "historical_note": "Ollama on HOSTC (CPU) retired; endpoint gone as of 2026-08-13 (no GPUs on HOSTC). Fixtures remain immutable codec regression evidence."
+    },
+    "hostf-vllm-laguna": {
+      "endpoint": "http://10.77.68.83:8000/v1/chat/completions",
+      "model": "laguna-s-2.1-nvfp4",
+      "scenarios": [
+        "01-plain-turn",
+        "02-single-tool-call",
+        "parallel-tool-calls",
+        "tool-result-continuation",
+        "error-bad-request",
+        "cancellation",
+        "context-limit"
+      ],
+      "note": "Mixed layout: legacy flat 01/02 + nested scenarios added 2026-08-13.",
+      "historical": false
+    },
+    "qwen3-coder-30b": {
+      "endpoint": "http://10.77.68.83:11434/v1/chat/completions",
+      "model": "qwen3-coder:30b",
+      "scenarios": [
+        "08-provider-error-oom"
+      ],
+      "historical": true,
+      "historical_note": "Spark Ollama qwen3-coder retired; real-OOM error fixture kept as regression evidence."
+    },
+    "hostf-vllm-lightning": {
+      "endpoint": "http://10.77.68.83:8001/v1/chat/completions",
+      "model": "nemotron-3.5-lightning",
+      "captured_at": 1786577290,
+      "scenarios": [
+        "plain-turn",
+        "single-tool-call",
+        "parallel-tool-calls",
+        "tool-result-continuation",
+        "error-bad-request",
+        "cancellation",
+        "context-limit",
+        "parallel-tool-calls-explicit"
+      ],
+      "historical": false
+    },
+    "mac-switchyard-agent": {
+      "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+      "model": "switchyard-agent",
+      "captured_at": 1786577300,
+      "note": "NeMo Switchyard v0.2 escalation router fronting spark lightning :8001 / laguna :8000. Chunks carry the SERVED model id (observed nemotron-3.5-lightning) \u2014 per-turn identity passes through.",
+      "scenarios": [
+        "plain-turn",
+        "single-tool-call",
+        "parallel-tool-calls",
+        "tool-result-continuation",
+        "error-bad-request",
+        "cancellation",
+        "context-limit",
+        "parallel-tool-calls-explicit"
+      ],
+      "historical": false
+    }
+  }
+}

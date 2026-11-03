@@ -1,0 +1,3 @@
+#!/bin/sh
+# Synthetic raw file content for the raw_file loopback test.
+echo "hello from the raw file endpoint"

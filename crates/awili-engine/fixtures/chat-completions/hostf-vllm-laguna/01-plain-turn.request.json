@@ -1,0 +1,1 @@
+{"model":"laguna-s-2.1-nvfp4","stream":true,"stream_options":{"include_usage":true},"max_tokens":100,"messages":[{"role":"user","content":"What is the capital of France? Answer in one word."}]}

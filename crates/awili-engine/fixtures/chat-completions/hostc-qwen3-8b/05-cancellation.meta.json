@@ -1,0 +1,12 @@
+{
+  "scenario": "05-cancellation",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.86:11434/v1/chat/completions",
+  "model": "qwen3:8b",
+  "captured_at": 1786061500,
+  "synthetic": false,
+  "sse_event_count": 13,
+  "saw_done_sentinel": false,
+  "response_bytes": 3136,
+  "note": "Client cancel: stream truncated without [DONE]."
+}

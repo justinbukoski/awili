@@ -1,0 +1,26 @@
+# Unit 4b: the IO half of attestation (design r9 §2.1) — setup-record
+# loader, platform attestor, interpreter classifier, and the install
+# authority view. Sits ABOVE the pure awili-attest-types vocabulary and is
+# consumed ONLY by awili-app; security-framework's closure is exactly
+# {awili-attest, awili-app} and never reaches the registry crates.
+[package]
+name = "awili-attest"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+sha2 = "0.10"
+awili-engine = { path = "../awili-engine" }
+awili-attest-types = { path = "../awili-attest-types" }
+awili-config = { path = "../awili-config" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+
+[dev-dependencies]
+tempfile = "3"

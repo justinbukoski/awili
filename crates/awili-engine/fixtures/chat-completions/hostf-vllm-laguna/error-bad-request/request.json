@@ -1,0 +1,5 @@
+{
+  "model": "laguna-s-2.1-nvfp4",
+  "stream": true,
+  "max_tokens": 16
+}

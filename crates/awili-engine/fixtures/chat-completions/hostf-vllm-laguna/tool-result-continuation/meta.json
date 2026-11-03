@@ -1,0 +1,13 @@
+{
+  "scenario": "tool-result-continuation",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.83:8000/v1/chat/completions",
+  "model": "laguna-s-2.1-nvfp4",
+  "captured_at": 1786580651,
+  "http_status": 200,
+  "sse_event_count": 9,
+  "saw_done_sentinel": true,
+  "response_bytes": 1974,
+  "capture_error": null,
+  "note": "Continuation after a tool result: model resumes with a natural-language answer, finish_reason=stop. Prior assistant tool_call + tool message are hand-authored (realistic); only the response is the fixture."
+}

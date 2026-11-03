@@ -1,0 +1,11 @@
+{
+  "scenario": "parallel-tool-calls-explicit",
+  "dialect": "chat-completions",
+  "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+  "model": "switchyard-agent",
+  "captured_at": 1786581120,
+  "sse_event_count": 66,
+  "saw_done_sentinel": true,
+  "synthetic": false,
+  "note": "Explicit parallel elicitation (parallel_tool_calls=true + MUST-emit-two prompt). The soft 'in parallel if you can' prompt got a single call; this proves the endpoint CAN parallel-call."
+}

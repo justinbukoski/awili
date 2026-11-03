@@ -1,0 +1,27 @@
+[package]
+name = "awili-config"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+serde.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+dirs.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
+
+# Linux: the freedesktop Secret Service (GNOME Keyring, KWallet, KeePassXC) over
+# D-Bus; the pure-Rust crypto avoids an OpenSSL link. With no Secret Service
+# running every call fails with a plain message; nothing falls back to disk.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+
+[target.'cfg(windows)'.dependencies]
+awili-winacl = { path = "../awili-winacl" }
+
+[target.'cfg(windows)'.dev-dependencies]
+awili-winacl = { path = "../awili-winacl", features = ["test-seam"] }

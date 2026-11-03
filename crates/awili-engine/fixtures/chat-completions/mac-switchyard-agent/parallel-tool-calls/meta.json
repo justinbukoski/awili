@@ -1,0 +1,13 @@
+{
+  "scenario": "parallel-tool-calls",
+  "dialect": "chat-completions",
+  "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+  "model": "switchyard-agent",
+  "captured_at": 1786577304,
+  "http_status": 200,
+  "sse_event_count": 43,
+  "saw_done_sentinel": true,
+  "response_bytes": 10231,
+  "capture_error": null,
+  "note": "Multiple concurrent tool_calls distinguished by choices[].delta.tool_calls[].index (0 and 1)."
+}

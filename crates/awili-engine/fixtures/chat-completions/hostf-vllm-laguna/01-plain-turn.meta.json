@@ -1,0 +1,12 @@
+{
+  "scenario": "01-plain-turn",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.83:8000/v1/chat/completions",
+  "model": "laguna-s-2.1-nvfp4",
+  "captured_at": 1786061500,
+  "synthetic": false,
+  "sse_event_count": 43,
+  "saw_done_sentinel": true,
+  "response_bytes": 10138,
+  "note": "Plain turn: reasoning deltas, content deltas, finish=stop, trailing usage, [DONE]."
+}

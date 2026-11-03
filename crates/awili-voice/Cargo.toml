@@ -1,0 +1,49 @@
+[package]
+name = "awili-voice"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+
+# Voice: dictation in (whisper-rs STT) + read-aloud out (TTS backends). The pure
+# pieces — config parsing, the transcript→EditBuffer inserter, the TTS sentence
+# chunker, model path/url resolution — are unit-tested on this Linux host. The
+# hardware paths (cpal mic capture, `say`/`afplay` playback) are mac-gated and
+# smoke-tested live by Foreman.
+
+[dependencies]
+awili-core = { path = "../awili-core" }
+awili-config = { path = "../awili-config" }
+
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+dirs.workspace = true
+reqwest.workspace = true
+async-channel.workspace = true
+sha2.workspace = true
+
+# whisper.cpp bindings. Compiles on every platform (the DoD's "whisper-rs must
+# still compile linux"); the Metal GPU backend is added only on macOS below.
+whisper-rs.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Metal acceleration for whisper on Apple silicon — mac-only feature, additively
+# unified with the base (featureless) whisper-rs dep above.
+whisper-rs = { workspace = true, features = ["metal"] }
+# TCC microphone-permission pre-flight (permission.rs): raw AVFoundation calls.
+# Same objc version gpui already pins, so nothing new resolves.
+objc = "0.2"
+# CoreAudio mic capture. Awili only captures audio on macOS, so cpal never builds
+# on Linux.
+cpal.workspace = true
+
+[dev-dependencies]
+hound.workspace = true
+
+# objc 0.2's msg_send! expands a `cfg(cargo-clippy)` guard; rustc 1.8x flags it as an
+# unexpected cfg in every call site. Not ours to fix; silenced for this crate only.
+[lints.rust]
+unexpected_cfgs = "allow"

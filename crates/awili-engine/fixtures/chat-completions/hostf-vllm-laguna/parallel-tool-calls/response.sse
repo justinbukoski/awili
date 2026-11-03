@@ -1,0 +1,34 @@
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"prompt_token_ids":null,"prompt_text":null}
+
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[{"index":0,"delta":{"content":"I'll get"},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[{"index":0,"delta":{"content":" the weather for both Paris and Tokyo. Calling"},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[{"index":0,"delta":{"content":" the"},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[{"index":0,"delta":{"content":" get"},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[{"index":0,"delta":{"content":"_weather function for each"},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[{"index":0,"delta":{"content":" city now"},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[{"index":0,"delta":{"content":"."},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[{"index":0,"delta":{"content":null,"tool_calls":[{"id":"chatcmpl-tool-a9ebd3dcd0211a44","type":"function","index":0,"function":{"name":"get_weather","arguments":""}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[{"index":0,"delta":{"content":null,"tool_calls":[{"index":0,"function":{"arguments":"{\"city\": \"Paris"}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[{"index":0,"delta":{"content":null,"tool_calls":[{"index":0,"function":{"arguments":"\"}"}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[{"index":0,"delta":{"content":null,"tool_calls":[{"id":"chatcmpl-tool-8f4f72177e95840b","type":"function","index":1,"function":{"name":"get_weather","arguments":""}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[{"index":0,"delta":{"content":null,"tool_calls":[{"index":1,"function":{"arguments":"{\"city\": \"To"}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[{"index":0,"delta":{"content":null,"tool_calls":[{"index":1,"function":{"arguments":"kyo\"}"}}]},"logprobs":null,"finish_reason":null,"token_ids":null}]}
+
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"tool_calls","stop_reason":24,"token_ids":null}]}
+
+data: {"id":"chatcmpl-a1746b8e5e644118","object":"chat.completion.chunk","created":1786580647,"model":"laguna-s-2.1-nvfp4","choices":[],"usage":{"prompt_tokens":155,"total_tokens":220,"completion_tokens":65},"system_fingerprint":"vllm-0.25.1-9139b3b8"}
+
+data: [DONE]
+

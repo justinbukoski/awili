@@ -1,0 +1,18 @@
+[package]
+name = "awili-engine"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+version.workspace = true
+edition.workspace = true
+
+# PURITY CONTRACT (PS-ENG-02): this crate is the pure agent-loop core.
+# NO tokio, NO gpui, NO IO, NO network deps — reducer in, events out.
+# CI guard: scripts/check-engine-purity.sh greps this file's [dependencies].
+[dependencies]
+awili-image-content = { path = "../awili-image-content" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# Pure hashing for the canonical tool-identity digest (unit 4 Delta A′) —
+# no IO, permitted under the PS-ENG-02 purity guard.
+sha2 = "0.10"

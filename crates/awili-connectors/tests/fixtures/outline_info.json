@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "data": {
+    "id": "doc-abc-123",
+    "title": "Infrastructure Runbook",
+    "text": "Old body content.",
+    "revision": 3,
+    "url": "/document/doc-abc-123"
+  }
+}

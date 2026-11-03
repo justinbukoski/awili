@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-25","object":"chat.completion.chunk","created":1786065265,"model":"qwen3:8b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"length"}]}
+
+data: {"id":"chatcmpl-25","object":"chat.completion.chunk","created":1786065265,"model":"qwen3:8b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":40959,"completion_tokens":1,"total_tokens":40960}}
+
+data: [DONE]
+

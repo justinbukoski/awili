@@ -1,0 +1,123 @@
+[package]
+name = "awili-app"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "awili-app"
+path = "src/main.rs"
+
+[dependencies]
+awili-image-content = { path = "../awili-image-content" }
+chrono = { workspace = true, features = ["clock"] }
+# C2-u2 MCP runtime (triad decision: rmcp is awili-app-only — never in
+# awili-engine/awili-engine-authz/awili-tools). Client-only feature set: the
+# default features enable the server surface (server, schemars/pastey,
+# tool-derive macros), none of which the client touches.
+rmcp = { version = "2.2", default-features = false, features = ["client", "transport-child-process"] }
+# Confined to the MCP runtime OS thread via a current-thread runtime
+# (INV-C2-1); tokio never appears in any boundary-crossing type.
+tokio = { version = "1", features = ["rt", "macros", "process", "time", "io-util"] }
+# The wrapper API rmcp spawns its MCP servers through; Windows confines them in a
+# Job Object by their own handle (winjob::TrackedJob). Already in the graph via rmcp.
+process-wrap = { version = "9", features = ["tokio1"] }
+awili-core = { path = "../awili-core" }
+awili-council = { path = "../awili-council" }
+awili-engine = { path = "../awili-engine" }
+awili-engine-log = { path = "../awili-engine-log" }
+# Unit 5: the per-call install authority query trait.
+awili-engine-authz = { path = "../awili-engine-authz" }
+sha2 = "0.10"
+awili-tools = { path = "../awili-tools" }
+awili-seam = { path = "../awili-seam" }
+# Daily-driver P1: the executor-neutral fleet skills pack (select + render
+# only — no GPUI, no network), injected ahead of the executor prompt on Work
+# submission.
+awili-skills = { path = "../awili-skills" }
+awili-selftest = { path = "../awili-selftest" }
+awili-attest = { path = "../awili-attest" }
+awili-attest-types = { path = "../awili-attest-types" }
+awili-config = { path = "../awili-config" }
+awili-providers = { path = "../awili-providers" }
+awili-ccd = { path = "../awili-ccd" }
+awili-code = { path = "../awili-code" }
+awili-gateway = { path = "../awili-gateway" }
+awili-work = { path = "../awili-work" }
+awili-engine-worker = { path = "../awili-engine-worker" }
+# Daily-driver P2d: the durable local Build lane — the app binds a selected
+# `[build_targets.<id>]` executor to the SSH runner client (submit ONCE,
+# persist the durable request id, poll `status` of the same id).
+awili-dispatch = { path = "../awili-dispatch", default-features = false }
+# Stable per-turn identities for the local Build lane (turn ids minted on the
+# UI side, like conversation ids).
+uuid = { workspace = true }
+reqwest = { workspace = true }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+url = "2"
+awili-memory = { path = "../awili-memory" }
+awili-connectors = { path = "../awili-connectors" }
+awili-persist = { path = "../awili-persist" }
+awili-voice = { path = "../awili-voice" }
+awili-feed = { path = "../awili-feed" }
+futures.workspace = true
+async-channel.workspace = true
+dirs.workspace = true
+pulldown-cmark.workspace = true
+open.workspace = true
+# gpui is pinned by the workspace [patch] to the public GPUI fork. The
+# gpui_platform features enable font-kit plus the Linux Wayland and X11 backends.
+ignore = "0.4"
+notify = "8"
+portable-pty = "0.9"
+alacritty_terminal = "0.26"
+gpui = { git = "https://github.com/zed-industries/zed", rev = "c83cef45" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "c83cef45", features = ["font-kit", "wayland", "x11"] }
+
+# N1b: native macOS notifications (UNUserNotificationCenter) through objc2.
+# `default-features = false` on objc2-user-notifications keeps
+# objc2-core-location out; everything else is already in the lock.
+# Bounded liveness probe (kill(pid, 0)) awaiting child reap on MCP failure paths.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+# Slice K (KIT.md v3): `ui::motion` reads the system Reduce Motion
+# preference (`NSWorkspace.accessibilityDisplayShouldReduceMotion`) and
+# observes `NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification` for
+# live updates.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace"] }
+objc2-foundation = "0.3"
+objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "bitflags", "block2", "UNUserNotificationCenter", "UNNotificationRequest", "UNNotificationContent", "UNNotificationResponse", "UNNotification", "UNNotificationSettings", "UNNotificationSound", "UNNotificationTrigger", "UNError"] }
+
+[dev-dependencies]
+tempfile = "3"
+# Whole-kit review: the theme-only-values test parses the kit with syn, so
+# comments, parentheses, visibility and attributes cannot hide a literal.
+syn = { version = "2", features = ["full", "visit"] }
+# Unit 4 (design r7): the shared test-authority fixture for this package's
+# test targets. Dev-only — never in the production feature graph.
+awili-engine-log = { path = "../awili-engine-log", features = ["test-authority"] }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "c83cef45", features = ["test-support"] }
+
+[target.'cfg(windows)'.dependencies]
+awili-winacl = { path = "../awili-winacl" }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# Unconditional on purpose: `target.cfg(..).build-dependencies` tests the HOST, but
+# build.rs decides at run time from CARGO_CFG_TARGET_OS (the TARGET), so a cross
+# build to Windows still embeds the icon and version. It is pure Rust.
+[build-dependencies]
+winresource = "0.1"

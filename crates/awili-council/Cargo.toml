@@ -1,0 +1,11 @@
+[package]
+name = "awili-council"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+
+# RC2-CNCL3: the Council's pure core — members, rounds, @mentions, stance
+# tags, round summaries and (RC2-CNCL4) what each member is sent. No GPUI, no
+# I/O, no dependencies: the app crate drives it.
+[dependencies]

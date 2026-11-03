@@ -1,0 +1,1 @@
+{"job_id":"job-1781751122-1158946-18","state":"working","files_touched":3,"runtime_s":45,"exit_code":null,"needs_attention":false,"log_tail":"   Compiling awili-route v0.1.0\n","repo":"/home/example/Projects/awili","engine":"claude"}

@@ -1,0 +1,5 @@
+{
+  "model": "switchyard-agent",
+  "stream": true,
+  "max_tokens": 16
+}

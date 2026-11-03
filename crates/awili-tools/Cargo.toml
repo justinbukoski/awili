@@ -1,0 +1,24 @@
+[package]
+name = "awili-tools"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+
+# C2 v1: C1-independent registry/projection scaffold.
+# A PURE library — no Tokio, rmcp, GPUI, IO, HTTP, filesystem, or C1 authz
+# dependency. Only serde, serde_json, sha2, thiserror, async-channel (runtime-agnostic
+# channel TYPES for the C2-u2 boundary — this crate spawns no threads and
+# performs no IO; it may hold channel endpoints and a JoinHandle handed to
+# it), awili-engine, and awili-attest-types (unit 4b: pure attestation
+# vocabulary — value types, fact accessors, and the scoped bind; no IO, no
+# platform dependency, verified by its own manifest carrying the same purity
+# contract).
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+thiserror = { workspace = true }
+awili-engine = { path = "../awili-engine" }
+awili-attest-types = { path = "../awili-attest-types" }
+async-channel = { workspace = true }

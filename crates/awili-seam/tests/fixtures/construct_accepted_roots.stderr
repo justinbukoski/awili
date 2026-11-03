@@ -1,0 +1,11 @@
+error: cannot construct `AcceptedRoots` with struct literal syntax due to private fields
+  --> tests/fixtures/construct_accepted_roots.rs:8:13
+   |
+ 8 |     let _ = AcceptedRoots {
+   |             ^^^^^^^^^^^^^
+ 9 |         origin: awili_engine::ToolOrigin::new("mcp:forged"),
+   |         --------------------------------------------------- private field
+10 |         epoch: 999,
+   |         ---------- private field
+   |
+   = note: ...and other private fields `generation`, `server`, `roots`, `attestation` and `setup_id` that were not provided

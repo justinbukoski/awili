@@ -1,0 +1,12 @@
+{
+  "scenario": "07-context-limit",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.86:11434/v1/chat/completions",
+  "model": "qwen3:8b",
+  "captured_at": 1786065265,
+  "synthetic": false,
+  "sse_event_count": 3,
+  "saw_done_sentinel": true,
+  "response_bytes": 561,
+  "note": "P7 REAL capture: ~41k-token prompt vs 40960 ctx ceiling. Ollama emits ONE empty content delta with finish_reason=length, usage prompt_tokens=40959 completion=1 total=40960 (exactly the ceiling), then [DONE]. Context overflow = silent truncation + empty length-stop, NOT an error. C4 must treat Length+empty-text as context exhaustion."
+}

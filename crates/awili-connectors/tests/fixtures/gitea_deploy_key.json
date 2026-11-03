@@ -1,0 +1,6 @@
+{
+  "id": 7,
+  "title": "awili-deploy-key",
+  "key": "ssh-ed25519 AAAAsynthetickeydata deploy@awili",
+  "read_only": true
+}

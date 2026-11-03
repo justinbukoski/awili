@@ -1,0 +1,8 @@
+# Pinned 2026-08-21. The vendored zed-gpui fork uses the unstable `cold_path`
+# hint, which rustup's current default stable (1.94.1) rejects with E0658 — so
+# whether the tree builds depended on which `cargo` won the PATH race between
+# Homebrew's and rustup's. That non-determinism failed a ccd rust_release gate
+# on code that was actually green (job-1787336235-57314-0). Pin it.
+[toolchain]
+channel = "1.96.1"
+components = ["rustfmt", "clippy"]

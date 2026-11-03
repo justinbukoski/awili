@@ -1,0 +1,20 @@
+[package]
+name = "awili-winacl"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+description = "Owner-only Windows ACLs (the equivalent of Unix 0600/0700). Empty on other platforms."
+
+[features]
+# Lets a dependent crate's tests force the post-create read-back to fail.
+test-seam = []
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }

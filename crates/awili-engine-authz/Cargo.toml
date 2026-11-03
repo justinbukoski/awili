@@ -1,0 +1,25 @@
+[package]
+name = "awili-engine-authz"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+version.workspace = true
+edition.workspace = true
+
+# C1: pure policy engine (contract v2 r12). Depends on awili-engine (types)
+# and awili-engine-log (B2-owned proofs/evidence/records). Purity contract:
+# no IO, no clocks — decisions are a pure function of (call, context,
+# policy, grants). Enforced by the same guard pattern as awili-engine.
+[dependencies]
+awili-engine = { path = "../awili-engine" }
+# Unit 5 (verdict rev 4 / ruling 13-analog): the branded witness type the
+# matching install arm consumes — pure attestation vocabulary only.
+awili-attest-types = { path = "../awili-attest-types" }
+awili-engine-log = { path = "../awili-engine-log" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Unit 4 (design r7): the integration-test crate cannot see `pub(crate)`
+# issuers; the shared fixture is the sanctioned source. Dev-only.
+awili-engine-log = { path = "../awili-engine-log", features = ["test-authority"] }

@@ -1,0 +1,13 @@
+{
+  "scenario": "plain-turn",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.83:8083/v1/chat/completions",
+  "model": "deepseek-v4-flash",
+  "captured_at": 1785090732,
+  "http_status": 200,
+  "sse_event_count": 129,
+  "saw_done_sentinel": true,
+  "response_bytes": 24909,
+  "capture_error": null,
+  "note": "Simplest turn: role delta, content deltas, finish_reason=stop, trailing usage chunk."
+}

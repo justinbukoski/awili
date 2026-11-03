@@ -1,0 +1,12 @@
+{
+  "scenario": "04-tool-continuation",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.86:11434/v1/chat/completions",
+  "model": "qwen3:8b",
+  "captured_at": 1786061500,
+  "synthetic": false,
+  "sse_event_count": 228,
+  "saw_done_sentinel": true,
+  "response_bytes": 54283,
+  "note": "Tool result fed back; continuation segment."
+}

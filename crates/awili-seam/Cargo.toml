@@ -1,0 +1,32 @@
+[package]
+name = "awili-seam"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+# Dev-tool harness for the C1→B2→C2 seam (C2-u5). NOT a product crate:
+# no product crate may depend on it; D1 either adopts the proven
+# composition or deletes this crate (Codex u5 design P2).
+publish = false
+
+[dependencies]
+awili-image-content = { path = "../awili-image-content" }
+awili-engine = { path = "../awili-engine" }
+awili-engine-log = { path = "../awili-engine-log" }
+awili-engine-authz = { path = "../awili-engine-authz" }
+awili-attest-types = { path = "../awili-attest-types" }
+awili-engine-sandbox = { path = "../awili-engine-sandbox" }
+awili-tools = { path = "../awili-tools" }
+awili-builtins = { path = "../awili-builtins" }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+awili-engine = { path = "../awili-engine" }
+trybuild = "1"
+async-channel = { workspace = true }
+tempfile = "3"
+# Unit 4 (design r7): shared test-authority fixture for this package's test
+# targets. Dev-only — never in the production feature graph.
+awili-engine-log = { path = "../awili-engine-log", features = ["test-authority"] }

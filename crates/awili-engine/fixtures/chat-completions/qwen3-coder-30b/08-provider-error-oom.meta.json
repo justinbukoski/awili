@@ -1,0 +1,12 @@
+{
+  "scenario": "08-provider-error-oom",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.83:11434/v1/chat/completions",
+  "model": "qwen3-coder:30b",
+  "captured_at": 1786061500,
+  "synthetic": false,
+  "sse_event_count": 0,
+  "saw_done_sentinel": false,
+  "response_bytes": 141,
+  "note": "REAL provider error: Ollama OOM beside Laguna vLLM (non-SSE JSON body)."
+}

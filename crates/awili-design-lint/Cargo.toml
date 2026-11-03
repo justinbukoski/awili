@@ -1,0 +1,24 @@
+[package]
+name = "awili-design-lint"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+
+# Design-token ratchet (docs/v2/PLAN.md slice 2): scans the Awili UI source for
+# raw colour/size expressions and compares their fingerprints against a
+# baseline that can only shrink. Pure text scanning — no gpui, no target
+# gating; builds and runs identically on the mac and on Linux CI.
+# Dependencies are all already in the workspace lock (walkdir 2.5.0, regex
+# 1.12.x, serde 1.0.228, toml 0.8.x, anyhow 1.0.102).
+
+[[bin]]
+name = "awili-design-lint"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+regex = "1"
+serde.workspace = true
+toml.workspace = true
+walkdir = "2"

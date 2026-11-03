@@ -1,0 +1,13 @@
+{
+  "scenario": "tool-result-continuation",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.83:8001/v1/chat/completions",
+  "model": "nemotron-3.5-lightning",
+  "captured_at": 1786577288,
+  "http_status": 200,
+  "sse_event_count": 32,
+  "saw_done_sentinel": true,
+  "response_bytes": 7358,
+  "capture_error": null,
+  "note": "Continuation after a tool result: model resumes with a natural-language answer, finish_reason=stop. Prior assistant tool_call + tool message are hand-authored (realistic); only the response is the fixture."
+}

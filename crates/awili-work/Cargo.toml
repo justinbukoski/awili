@@ -1,0 +1,16 @@
+[package]
+name = "awili-work"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+# The engine-neutral Work seam (ENGINE-PIVOT-PLAN r3.1, D1): WorkCmd in,
+# WorkEvent out, EngineWorker on its own thread. No Hermes wire types, no
+# tokio, no gpui — the trait an engine implements to sit behind the Work
+# surface. awili-gateway (the Hermes impl) depends on THIS crate, never the
+# reverse.
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+async-channel = { workspace = true }

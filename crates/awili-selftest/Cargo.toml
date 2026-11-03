@@ -1,0 +1,34 @@
+[package]
+name = "awili-selftest"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+version.workspace = true
+edition.workspace = true
+description = "Daily-driver selftest: versioned probe manifest, expectation evaluator, result matrix and runner CLI (P0a + P0b of docs/daily-driver/specs/P0-selftest.md)."
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+# clock feature on top of the workspace's `std`-only chrono: the runner needs
+# Utc::now() for RFC3339 `started_at` and report filenames (spec P0-selftest.md).
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+# Spec-required (P0-selftest.md): Expect::Regex and the redaction patterns.
+regex = "1"
+# Binary only: the `awili-selftest run|report|validate` CLI front-end.
+clap = { version = "4", features = ["derive"] }
+
+# P0-weekend-repair.md item 2 (the one new dependency): each Unix executor
+# runs in its own process group and the deadline kill is `nix::sys::signal::
+# killpg`; the stdout/stderr pipes are drained with a bounded
+# `nix::poll::poll` so a background descendant holding a pipe can neither
+# wedge the ask nor outlive the deadline. nix is safe Rust (no `unsafe` in
+# this crate) and is only used on Unix targets.
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["fs", "poll", "signal"] }
+
+# Test-only: the process-group regression test re-runs its own binary as the
+# child that joins the parent's group (setpgid), replacing a python3 -c child.
+[target.'cfg(unix)'.dev-dependencies]
+nix = { version = "0.31", default-features = false, features = ["process"] }

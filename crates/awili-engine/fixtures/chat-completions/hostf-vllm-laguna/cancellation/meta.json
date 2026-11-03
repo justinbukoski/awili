@@ -1,0 +1,11 @@
+{
+  "scenario": "cancellation",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.83:8000/v1/chat/completions",
+  "model": "laguna-s-2.1-nvfp4",
+  "captured_at": 1786580682,
+  "sse_event_count": 17,
+  "saw_done_sentinel": false,
+  "synthetic": false,
+  "note": "REAL client cancel: socket closed after ~4KB; stream truncated without [DONE]."
+}

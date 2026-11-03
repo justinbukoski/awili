@@ -1,0 +1,11 @@
+{
+  "model": "laguna-s-2.1-nvfp4",
+  "stream": true,
+  "max_tokens": 64,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Summarize: word0 ... word150731 (ELIDED 1546941 chars in fixture request; response is verbatim)"
+    }
+  ]
+}

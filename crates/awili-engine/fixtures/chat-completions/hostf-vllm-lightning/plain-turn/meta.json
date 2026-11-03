@@ -1,0 +1,13 @@
+{
+  "scenario": "plain-turn",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.83:8001/v1/chat/completions",
+  "model": "nemotron-3.5-lightning",
+  "captured_at": 1786577286,
+  "http_status": 200,
+  "sse_event_count": 300,
+  "saw_done_sentinel": true,
+  "response_bytes": 70694,
+  "capture_error": null,
+  "note": "Simplest turn: role delta, content deltas, finish_reason=stop, trailing usage chunk."
+}

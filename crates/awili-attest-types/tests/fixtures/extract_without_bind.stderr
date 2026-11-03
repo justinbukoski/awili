@@ -1,0 +1,17 @@
+error[E0532]: cannot match against a tuple struct which contains private fields
+  --> tests/fixtures/extract_without_bind.rs:26:9
+   |
+26 |     let LaunchToken(contents) = token;
+   |         ^^^^^^^^^^^
+   |
+note: constructor is not visible here due to private fields
+  --> tests/fixtures/extract_without_bind.rs:26:21
+   |
+26 |     let LaunchToken(contents) = token;
+   |                     ^^^^^^^^ private field
+
+error[E0616]: field `0` of struct `LaunchToken` is private
+  --> tests/fixtures/extract_without_bind.rs:22:23
+   |
+22 |     let inner = token.0;
+   |                       ^ private field

@@ -1,0 +1,13 @@
+[package]
+name = "awili-connectors"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+description = "Typed blocking clients for the fleet Outline (notes) and Gitea (code) APIs: secret refs, redacting errors, offline loopback-proofed wire contracts."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+reqwest.workspace = true

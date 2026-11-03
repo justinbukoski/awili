@@ -1,0 +1,12 @@
+{
+  "scenario": "context-limit",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.83:8001/v1/chat/completions",
+  "model": "nemotron-3.5-lightning",
+  "captured_at": 1786580675,
+  "sse_event_count": 0,
+  "saw_done_sentinel": false,
+  "synthetic": false,
+  "http_status": 400,
+  "note": "REAL overflow: ~301465-token prompt vs 262144 ctx. vLLM rejects with HTTP 400 JSON error body (canonical ProviderError), unlike Ollama silent-truncation+length-stop (hostc 07). Request body words ELIDED in fixture; response verbatim."
+}

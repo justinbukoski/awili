@@ -1,0 +1,293 @@
+# Awili configuration — copy to ~/.config/awili/config.toml and edit.
+#
+# Awili reads ~/.config/awili/config.toml first, then the platform config dir
+# (on macOS ~/Library/Application Support/awili/config.toml) as a fallback.
+#
+# Everything here is optional: with no file present Awili falls back to runnable
+# defaults (localhost Ollama + Anthropic, and the Foreman memory service). A
+# malformed file is NOT silently ignored — the app disables networking and shows
+# the error instead of connecting to unintended endpoints.
+
+# Which provider/model the model chip starts on. The chip shows in Code and the
+# other tool tabs; Chat and Work have none (Chat is pinned by [chat] further down,
+# Work picks a helper). `default_model` is matched within `default_provider`; either
+# may be omitted (falls back to the first entry). A `provider:<name>` Chat pin
+# also runs at `default_model`.
+default_provider = "ollama"
+default_model = "llama3.1:8b"
+
+# The owned memory service. Standing directives at or above `min_priority` are
+# fetched every turn and prepended as the system preamble (the rules:N chip).
+# `min_priority` must be >= 90 (the spec floor); a lower value is rejected at load.
+# Memory is off until you give it an address. `recall` / `write` (both default
+# false): `recall = true` looks up Awili's own memories every turn; `write =
+# true` lets Awili post chat-log lines and usage notes (reads stay on).
+[memory]
+# base_url = "http://localhost:8841"
+min_priority = 90
+# recall = true
+# write = true
+
+# Providers are an ordered list — the model chip cycles their models in order.
+# A row reaches Chat only through a `provider:<name>` pin in [chat].
+# `kind` selects the wire protocol: "ollama" | "anthropic" | "hermes" | "openai".
+# `enabled` (slice 11, default true): a disabled provider keeps its entry but
+# contributes no models to the chip or the default-model dropdown.
+
+[[providers]]
+name = "ollama"
+kind = "ollama"
+base_url = "http://localhost:11434"
+models = ["llama3.1:8b", "qwen2.5:14b"]
+enabled = true
+
+[[providers]]
+name = "anthropic"
+kind = "anthropic"
+base_url = "https://api.anthropic.com"
+models = ["claude-opus-4-8"]
+# The API key comes from the AWILI_ANTHROPIC_KEY environment variable, not config.
+
+# A self-hosted Hermes-kind endpoint on the LAN. (Historical note: this
+# example used to point at a local deepseek-v4-flash on the fleet's own
+# hardware — that box no longer runs. For DeepSeek models use the cloud
+# `deepseek` provider below, NOT a LAN endpoint.) For a static credential,
+# set `api_key` here (bound to this provider, never sent to any other
+# kind) — or leave it unset and supply AWILI_HERMES_KEY in the env. With
+# neither, no bearer is sent. The Anthropic key is NEVER sent here. ("local"
+# below is a placeholder the LAN endpoint ignores, not a credential.)
+[[providers]]
+name = "hermes"
+kind = "hermes"
+base_url = "http://localhost:8083"
+models = ["hermes-agent"]
+api_key = "local"
+
+# DeepSeek's cloud API — an OpenAI-compatible endpoint. Pay-per-token with an API
+# key, so the key belongs in this row's `api_key` below, NOT in your shell: the
+# macOS .app does not inherit a login shell environment. (AWILI_ENGINE_KEY is a
+# fallback for the [engine] section only; [[providers]] rows never read it.)
+# This row puts DeepSeek on the model chip. Chat has no picker: to run Chat on
+# DeepSeek, pin [chat] executor = "agent:dsh:deepseek-flash" (through dsh, not this
+# row). Work-mode fleet runs reach DeepSeek through [engine]; Code mode is
+# vendor-CLI only and does not reach it by design.
+[[providers]]
+name = "deepseek"
+kind = "openai"
+base_url = "https://api.deepseek.com"
+models = ["deepseek-flash", "deepseek-v4-pro"]
+# api_key = "sk-..."
+
+# Attention feed (slice 4): an optional service that syncs the "Needs You"
+# sidebar list across devices. It is off: leave base_url empty (or omit the
+# table) — no panel, no polling. Set it only once you run the service with
+# GET /acks (scripts/deploy-feed-hostc.sh); an address without it makes the panel say
+# "No feed service at …". The bearer token comes from the AWILI_FEED_TOKEN
+# environment variable, never config.
+[feed]
+base_url = ""
+
+# Fleet connectors (daily-driver P12): the Outline notes API and the Gitea
+# code host, exposed as the `outline_*` / `gitea_*` MCP tools of the
+# `awili-connectors` server (awili-connectors-mcp). OFF by default — enable a
+# section to offer its tools to the owned engine (Work mode) and to the vendor
+# CLIs that take an MCP server (claude `--mcp-config`, codex `-c`).
+#
+# Credentials are NEVER stored here: only the file path that holds the
+# credential (and, for a KEY=VALUE file, the key line to take from it). The
+# value is resolved at call time through awili-connectors' SecretRef and is
+# never logged. A disabled or absent section simply omits that family's tools.
+#
+# [outline]
+# enabled     = false
+# base_url    = "https://outline.example.com/api"
+# secret_file = "~/.config/outline.env"
+# secret_key  = "OUTLINE_API_KEY"
+#
+# [gitea]
+# enabled     = false
+# base_url    = "https://gitea.example.com/api/v1"
+# secret_file = "~/.config/gitea.token"
+# (omit secret_key entirely: the whole file is the token — there is no null)
+# ssh_host    = "gitea.example.com"
+# ssh_port    = 2222
+
+# Voice (slice 3): dictation in, read-aloud out. The whole table is optional —
+# omit it for the defaults below. The PRIMARY dictation control is the mic
+# button: click to start listening, click again to stop and insert.
+[voice]
+# Whisper model auto-downloaded on first dictation (whisper.cpp ggml-*.bin from
+# Hugging Face). Quantized base.en is small, English-only, CPU-friendly.
+# Auto-download is restricted to a pinned allowlist (tiny/base/small, .en and
+# quantized variants) verified by exact size + SHA-256; for anything else,
+# download it yourself and point model_path at the file.
+model = "base.en-q5_1"
+# Override with an explicit on-disk model to skip the download entirely:
+# model_path = "/path/to/ggml-small.en.bin"
+
+# Optional hold-to-talk modifier (SECONDARY to the mic button), held to dictate.
+# One of: option (default), fn, control, command, off. Detection is by modifier
+# pair — either side of the pair triggers it; "off" disables hold-to-talk. The
+# old sided names (right_option, left_control, …) are accepted as aliases of
+# their pair. Option is the default because every keyboard has it (Fn exists
+# only on Apple keyboards). Dictation starts only after Option is held alone for
+# 300 ms; pressing any other key while it is down (⌥←/→, ⌥⌫, accents) cancels.
+ptt_key = "option"
+
+# Read every assistant reply aloud automatically. The composer-row toggle flips
+# this at runtime.
+auto_speak = false
+
+# Fleet-TTS HTTP endpoint. When unset, read-aloud uses the macOS `say` command.
+# When set, Awili POSTs {"text": "..."} and plays the returned audio (afplay).
+# tts_endpoint = "http://localhost:8900/tts"
+
+# Which voice/model the TTS endpoint should use, sent with each request when
+# set (slice 11). Leave unset for the endpoint's default.
+# tts_model = "af_bella"
+
+# Dictation voice-activity detection (slice 11). `vad_threshold` is the RMS
+# energy above which a window counts as speech — log-scaled, 0.001 (very
+# sensitive) to 0.1 (only loud speech). `vad_silence_windows` is how many
+# consecutive quiet windows end an utterance (10–60). Out-of-range values are
+# rejected at load.
+vad_threshold = 0.01
+vad_silence_windows = 30
+
+# ── The owned engine + the card-free mac-shell path (unit 5) ────────────────
+# Install both with ONE command (it copies the binary to a stable path,
+# pins its code signature, writes the 0600 attested-servers record, and
+# appends these two sections if absent):
+#
+#   scripts/install-mac-shell.sh /path/to/mac-shell
+#
+# Verify the complete installed state any time:
+#
+#   scripts/install-mac-shell.sh --verify
+
+# [engine]                      # the in-app Work model (L1). kind is legacy and ignored.
+# base_url = "http://localhost:8851"   # a local mlx_lm or other OpenAI-compatible server
+# model    = "/path/to/your/model"
+# label    = "My local model"
+# window_tokens     = 32768
+# request_timeout_s = 300
+
+# Additional in-app models, listed after the primary in the model picker as
+# "In-app · <label>". Optional; absent = only [engine] above. Each entry
+# needs a unique `id` (A-Z a-z 0-9 . _ -); a conversation remembers its pick
+# as "in-app:<id>". Same fields as [engine]; the api_key is sent to this
+# entry's server only. Nothing is contacted until a turn runs on it.
+# [[engines]]
+# id       = "qwen-hostd"
+# label    = "Qwen 3.8 27B (hostd)"
+# base_url = "http://qwen-host.example:8000"
+# model    = "Qwen/Qwen3.8-27B"
+# window_tokens     = 65536
+# request_timeout_s = 300
+
+# [[mcp.servers]]
+# name    = "mac-shell"    # the ONE name allowed to carry trust="install"
+# command = "/Users/you/Library/Application Support/Awili/bin/mac-shell"
+# trust   = "install"      # card-free, identity-bound, revocable live:
+#                          # flipping this to "prompt" restores cards on the
+#                          # very next call without a restart
+# modes   = ["work"]       # mac-shell is a work tool, not a chat tool
+
+# ---------------------------------------------------------------------------
+# SECRETS
+#
+# Never commit a real key. Precedence, highest first:
+#   1. environment variable  (e.g. AWILI_FEED_TOKEN, ANTHROPIC_API_KEY)
+#   2. this file             (`api_key` on a provider, `[hermes].api_key`)
+#   3. nothing               — the provider is offered but marked unusable
+#
+# A key typed in Settings is kept in the system secret store (macOS Keychain,
+# Windows Credential Manager) and this file holds only a reference such as
+# api_key = "secret:provider:openai". Plain keys written here keep working.
+#
+# This file lives at ~/.config/awili/config.toml, OUTSIDE the repository, and
+# the Settings UI masks every field whose name looks secret (api_key, token,
+# write_token, password, secret, client_secret, bearer).
+# ---------------------------------------------------------------------------
+
+# Vendor agent harnesses. Each runs as its own binary under its own OAuth —
+# never token-level integration, never a cross-vendor harness. Set a path
+# explicitly, or leave it out and Awili looks the binary up in `search_paths`
+# (a Finder-launched app inherits no shell PATH, hence the search).
+[work]
+# What runs a Work task when you have not picked an executor yet: "in-app"
+# (the default — the in-app engine on this Mac), "gateway" (the fleet gateway,
+# remote; can't see this Mac's folders), or an agent harness — "agent:glm",
+# "agent:codex", "agent:claude", "agent:dsh", optionally with a model
+# ("agent:claude:sonnet", "agent:dsh:deepseek-flash"). Seeds only; the
+# executor chip's choice is remembered and wins after that.
+# default_executor = "in-app"
+# One-click cloud target for the local-model down card (L1): the executor the
+# "Send with … instead" button switches Work to. Only agent:… values count.
+# cloud_escalation = "agent:claude"
+
+[work.agents]
+# claude_bin = "/opt/homebrew/bin/claude"
+# codex_bin  = "/opt/homebrew/bin/codex"
+# zcode_bin  = "/opt/homebrew/bin/zcode"
+# The DeepSeek `dsh` harness binary. When omitted, Awili looks `dsh` up in
+# `search_paths` below and then on `PATH`.
+# dsh_bin = "/opt/homebrew/bin/dsh"
+# The mode-0600 KEY=VALUE file the app reads to supply the dsh child's
+# DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL (a Finder-launched app inherits no login
+# shell). `~` is expanded; only the path is ever logged, never a value.
+# Default: none (dsh uses its own environment).
+# dsh_env_file = "~/.config/deepseek.conf"
+# Setting this REPLACES the default list; keep ~/.local/bin, where the
+# vendor CLIs, dsh and awili-connectors-mcp usually live.
+search_paths = ["/opt/homebrew/bin", "/usr/local/bin", "~/.npm-global/bin", "~/.local/bin"]
+
+# Chat is PINNED to one executor (daily-driver P9): there is no Chat model
+# picker. Every Chat turn runs on the same agent spawn path as Work/Code. The
+# grammar matches `[work].default_executor`; the default is Claude · haiku, and
+# "agent:dsh:deepseek-flash" switches Chat to the DeepSeek harness.
+# "provider:fleet" (household installs) is a closed route to the enabled
+# [[providers]] row named "fleet" at default_model: a missing or disabled row is
+# an error shown in Chat, never a fallback to another model.
+[chat]
+# executor = "agent:claude:haiku"
+
+# Model vocabularies. These describe THIRD-PARTY products, which get renamed
+# and extended on someone else's schedule, so they are data rather than code:
+# a new alias should never require rebuilding Awili. Omit any key to keep the
+# built-in default shown here.
+[models]
+# Selectable aliases for the Claude Code harness (`claude --model <alias>`).
+claude_aliases = ["fable", "opus", "sonnet", "haiku"]
+# Selectable models for the DeepSeek `dsh` harness. The chosen one travels to
+# the child as `DSH_MODEL` (the headless profile has no model flag).
+dsh_models = ["deepseek-flash", "deepseek-v4-pro"]
+# Discovered models whose name contains any of these are never offered as
+# chat targets (speech, image, reranking). An empty list disables filtering.
+non_chat_filters = [
+  "whisper", "kokoro", "flux", "tts", "vae", "sdxl", "stable-diffusion",
+  "rerank", "clip", "guard", "moderation",
+]
+
+# Fleet skills pack (daily-driver P1): a directory of skills
+# (<dir>/<name>/SKILL.md) whose recipes matching a submitted Work task are
+# prepended to the executor's prompt. OFF by default — omit the section (or
+# the key) and no recipes are injected; existing configs parse unchanged.
+#
+# Lifecycle: the pack is loaded from this config at app startup and again
+# whenever the config is re-applied (live save or app restart). Editing the
+# pack takes effect on the NEXT reload or restart — Awili runs no background
+# file watcher over the directory. A missing or malformed pack is a logged
+# diagnostic: the app keeps sending work without the pack, never fails.
+#
+# [skills]
+# fleet_pack = "/home/example/Projects/awili/skills/fleet"
+
+
+# Graduation ledger (daily-driver P8b): the app appends one JSON line per
+# terminal Work run (executor, model, outcome, tokens, fallback reason) to this
+# append-only file. `awili-selftest graduation report --ledger <path>
+# --policy tests/daily-driver/graduation.toml` turns it into the PASS / NOT YET
+# verdict for graduation week. Set `ledger = ""` to disable.
+[graduation]
+ledger = "~/.local/share/awili/graduation.jsonl"

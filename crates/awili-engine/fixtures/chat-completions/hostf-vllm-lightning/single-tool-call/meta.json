@@ -1,0 +1,13 @@
+{
+  "scenario": "single-tool-call",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.83:8001/v1/chat/completions",
+  "model": "nemotron-3.5-lightning",
+  "captured_at": 1786577287,
+  "http_status": 200,
+  "sse_event_count": 25,
+  "saw_done_sentinel": true,
+  "response_bytes": 5988,
+  "capture_error": null,
+  "note": "Streaming tool-call assembly: tool_calls delta with function.name then incremental function.arguments; finish_reason=tool_calls."
+}

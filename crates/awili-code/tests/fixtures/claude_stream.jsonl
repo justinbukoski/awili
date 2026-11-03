@@ -1,0 +1,8 @@
+{"type":"system","subtype":"hook_started","hook_id":"h1","hook_name":"SessionStart:startup","session_id":"d0fa077a"}
+{"type":"system","subtype":"init","cwd":"/private/tmp/probe","session_id":"d0fa077a","model":"claude-opus-4-8","permissionMode":"default","apiKeySource":"none"}
+{"type":"assistant","message":{"model":"claude-opus-4-8","content":[{"type":"text","text":"On it — running the tests."}],"usage":{"input_tokens":4530,"output_tokens":12}},"session_id":"d0fa077a"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"cargo test -p awili-code\npwd"}}]},"session_id":"d0fa077a"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_1","content":"test result: ok. 5 passed","is_error":false}]},"session_id":"d0fa077a"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"All green."}]},"session_id":"d0fa077a"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour"},"session_id":"d0fa077a"}
+{"type":"result","subtype":"success","is_error":false,"result":"All green.","usage":{"input_tokens":4530,"output_tokens":16},"total_cost_usd":0.083}

@@ -1,0 +1,13 @@
+{
+  "scenario": "tool-result-continuation",
+  "dialect": "chat-completions",
+  "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+  "model": "switchyard-agent",
+  "captured_at": 1786577305,
+  "http_status": 200,
+  "sse_event_count": 50,
+  "saw_done_sentinel": true,
+  "response_bytes": 11609,
+  "capture_error": null,
+  "note": "Continuation after a tool result: model resumes with a natural-language answer, finish_reason=stop. Prior assistant tool_call + tool message are hand-authored (realistic); only the response is the fixture."
+}

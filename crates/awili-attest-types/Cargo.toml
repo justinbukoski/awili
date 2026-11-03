@@ -1,0 +1,23 @@
+# Unit 4b: pure attestation vocabulary (design r9 §2.1).
+# A PURE library — no Tokio, rmcp, GPUI, IO, HTTP, filesystem, platform, or
+# C1 authz dependency. Only awili-engine (ToolOrigin, ConnectionGeneration)
+# and thiserror. The setup-record LOADER and the macOS attestor live in
+# awili-attest, which sits ABOVE this crate and is consumed only by awili-app;
+# security-framework never enters this crate's tree at any depth.
+[package]
+name = "awili-attest-types"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+awili-engine = { path = "../awili-engine" }
+
+[dev-dependencies]
+trybuild = "1"
+
+[[test]]
+name = "compile_fail"
+path = "tests/compile_fail.rs"

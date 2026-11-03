@@ -1,0 +1,13 @@
+{
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.83:8083/v1/chat/completions",
+  "model": "deepseek-v4-flash",
+  "scenarios": [
+    "plain-turn",
+    "single-tool-call",
+    "parallel-tool-calls",
+    "tool-result-continuation",
+    "error-bad-request"
+  ],
+  "generated_by": "fixtures/capture.py"
+}

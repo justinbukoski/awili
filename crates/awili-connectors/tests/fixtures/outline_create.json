@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "data": {
+    "id": "doc-new-456",
+    "title": "New Doc",
+    "text": "Fresh body.",
+    "revision": 1,
+    "url": "/document/doc-new-456"
+  }
+}

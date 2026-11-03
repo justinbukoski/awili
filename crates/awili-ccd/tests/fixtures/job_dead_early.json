@@ -1,0 +1,1 @@
+{"job_id":"job-x","state":"dead_early","files_touched":0,"runtime_s":1,"exit_code":1,"needs_attention":false,"log_tail":"claude died immediately\n","repo":"/home/example/Projects/awili","engine":"claude"}

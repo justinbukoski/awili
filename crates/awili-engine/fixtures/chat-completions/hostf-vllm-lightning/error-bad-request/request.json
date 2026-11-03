@@ -1,0 +1,5 @@
+{
+  "model": "nemotron-3.5-lightning",
+  "stream": true,
+  "max_tokens": 16
+}

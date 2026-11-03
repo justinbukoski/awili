@@ -1,0 +1,15 @@
+[package]
+name = "awili-providers"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+base64.workspace = true
+awili-image-content = { path = "../awili-image-content" }
+serde.workspace = true
+serde_json.workspace = true
+futures.workspace = true
+async-channel.workspace = true
+reqwest.workspace = true

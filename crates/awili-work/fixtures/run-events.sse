@@ -1,0 +1,35 @@
+: SYNTHETIC-PENDING-LIVE-CAPTURE — representative /v1/runs/{id}/events stream
+: built from the documented event shapes, NOT a live capture. Replace with a
+: real recording when one is available. The leading ':' lines are SSE comments
+: (keepalives use the same framing) and are skipped by SseParser.
+: keepalive
+
+event: plan
+data: {"type":"plan","steps":["Parse the request","Reply with PONG"],"text":"Plan ready"}
+
+: keepalive
+
+event: tool_progress
+data: {"type":"tool-progress","tool":"bash","status":"started","message":"echo PONG"}
+
+event: tool_progress
+data: {"type":"tool-progress","tool":"bash","status":"completed","message":"exit 0"}
+
+: keepalive
+: keepalive
+
+event: approval
+data: {"type":"approval","approval_id":"appr_1","kind":"dangerous_command","prompt":"Run: rm -rf build/?"}
+
+event: token
+data: {"type":"token","text":"PO"}
+
+event: token
+data: {"type":"token","text":"NG"}
+
+: keepalive
+
+event: completion
+data: {"type":"completion","status":"completed","output":"PONG"}
+
+data: [DONE]

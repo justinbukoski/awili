@@ -1,0 +1,13 @@
+{
+  "scenario": "parallel-tool-calls",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.83:8083/v1/chat/completions",
+  "model": "deepseek-v4-flash",
+  "captured_at": 1785090744,
+  "http_status": 200,
+  "sse_event_count": 39,
+  "saw_done_sentinel": true,
+  "response_bytes": 7977,
+  "capture_error": null,
+  "note": "Multiple concurrent tool_calls distinguished by choices[].delta.tool_calls[].index (0 and 1)."
+}

@@ -1,0 +1,7 @@
+{
+  "constraints": [{"id": 1, "content": "one app one database", "importance": 1.0, "pinned": true}],
+  "directives": [{"id": 2, "content": "deep think before code", "importance": 0.98}],
+  "facts": [{"id": 10, "content": "HOSTC is 10.77.68.86", "category": "fact", "importance": 1.0}],
+  "notes": [{"id": 20, "content": "awili pivot to hermes surface", "category": "note", "importance": 0.5}],
+  "reflections": []
+}

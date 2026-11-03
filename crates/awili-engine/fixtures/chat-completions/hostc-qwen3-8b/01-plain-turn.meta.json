@@ -1,0 +1,12 @@
+{
+  "scenario": "01-plain-turn",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.86:11434/v1/chat/completions",
+  "model": "qwen3:8b",
+  "captured_at": 1786061500,
+  "synthetic": false,
+  "sse_event_count": 175,
+  "saw_done_sentinel": true,
+  "response_bytes": 41974,
+  "note": "Plain turn: reasoning deltas, content deltas, finish=stop, trailing usage, [DONE]."
+}

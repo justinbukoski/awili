@@ -1,0 +1,10 @@
+# Clippy gate for the design ratchet (docs/v2/PLAN.md slice 2): raw colour
+# constructors are banned in the Awili UI code; use theme tokens instead.
+# theme.rs defines its own `const fn rgb` (not gpui::rgb); terminal_palette.rs
+# (exempt from the design-lint scan) is the only other file that may touch
+# raw colours and carries #![allow(clippy::disallowed_methods)].
+disallowed-methods = [
+  { path = "gpui::rgb",  reason = "use theme tokens (docs/v2/PLAN.md)" },
+  { path = "gpui::rgba", reason = "use theme tokens (docs/v2/PLAN.md)" },
+  { path = "gpui::hsla", reason = "use theme tokens (docs/v2/PLAN.md)" },
+]

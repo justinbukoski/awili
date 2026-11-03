@@ -1,0 +1,32 @@
+[package]
+name = "awili-engine-log"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+version.workspace = true
+edition.workspace = true
+
+# B2: durable execution log. This crate OWNS serialization + storage; the
+# pure awili-engine crate never sees IO. C1 consumes the frozen record
+# vocabulary defined here.
+[dependencies]
+awili-engine = { path = "../awili-engine" }
+# Unit 5 (verdict ruling 13): PURE attestation vocabulary only —
+# VerifiedLaunch/SetupIdentityId for the seed candidate. Never awili-attest,
+# configuration, coordinator, app, platform, or IO types.
+awili-attest-types = { path = "../awili-attest-types" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+crc32fast = "1"
+sha2 = "0.10"
+
+# Unit 4 (design r7, Delta A‴): the shared test-authority fixture. Purely
+# additive — it exposes `test_bundle()` and a test-gated `Clone` on the
+# capability types and demotes nothing. Consumers reach it through a
+# `[dev-dependencies]` edge with `features = ["test-authority"]`; the self
+# edge below turns the feature on for THIS package's own test targets.
+[features]
+test-authority = []
+
+[dev-dependencies]
+awili-engine-log = { path = ".", features = ["test-authority"] }

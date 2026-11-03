@@ -1,0 +1,14 @@
+{
+  "model": "nemotron-3.5-lightning",
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "max_tokens": 4096,
+  "messages": [
+    {
+      "role": "user",
+      "content": "Count slowly from 1 to 200, one number per line."
+    }
+  ]
+}

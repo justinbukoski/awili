@@ -1,0 +1,13 @@
+[package]
+name = "awili-mcp-testserver"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+version.workspace = true
+edition.workspace = true
+
+# THE GATE for C2-u2/u3. A hand-rolled JSON-RPC-over-stdio MCP server with
+# fault injection. Deliberately dependency-light (serde_json only, no async
+# runtime) so the fixture cannot fail for the same reasons the code under
+# test might.
+[dependencies]
+serde_json = { workspace = true }

@@ -1,0 +1,883 @@
+{
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "browser": {
+      "$ref": "#/$defs/__schema0",
+      "description": "Required launch/connect selection. Launch uses the selected executable and an owned temporary profile; connect uses one loopback CDP endpoint and target."
+    },
+    "start_url": {
+      "$ref": "#/$defs/__schema4",
+      "description": "Required initial HTTP(S) URL. Query values must be declared separately as public literals or secret references."
+    },
+    "environment": {
+      "$ref": "#/$defs/__schema10",
+      "description": "Optional deterministic browser settings. Defaults to 1280x720, en-US, UTC, light mode, reduced motion, and blocked service workers."
+    },
+    "actions": {
+      "$ref": "#/$defs/__schema12",
+      "description": "Required sequence of explicit browser actions."
+    },
+    "storage": {
+      "$ref": "#/$defs/__schema17",
+      "description": "Optional initial cookies, local storage, or session storage. Defaults to empty; every supplied value and origin must be declared and within the allowed origins."
+    },
+    "secrets": {
+      "$ref": "#/$defs/__schema21",
+      "description": "Optional environment-variable references for values used in actions, URLs, storage, or replay, and for redacting matching observed text. Secret values are never supplied inline."
+    },
+    "capture": {
+      "$ref": "#/$defs/__schema23",
+      "description": "Optional retained artifacts and event families. Defaults to only a final sanitized URL; request screenshots, DOM, accessibility, history, storage, and event capture explicitly."
+    }
+  },
+  "required": [
+    "browser",
+    "start_url",
+    "actions"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/__schema1"
+        },
+        {
+          "$ref": "#/$defs/__schema3"
+        }
+      ],
+      "description": "Required launch/connect selection. Launch uses the selected executable and an owned temporary profile; connect uses one loopback CDP endpoint and target."
+    },
+    "__schema1": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "const": "launch",
+          "description": "Operation mode that selects the requested behavior."
+        },
+        "executable_path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^\\x00]*$",
+          "description": "Absolute local filesystem path for the browser executable; relative paths are rejected."
+        },
+        "headless": {
+          "default": true,
+          "description": "Run without a visible browser window; defaults to true and can be disabled when the host supports a display.",
+          "$ref": "#/$defs/__schema2"
+        }
+      },
+      "required": [
+        "mode",
+        "executable_path"
+      ],
+      "additionalProperties": false
+    },
+    "__schema2": {
+      "type": "boolean"
+    },
+    "__schema3": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "const": "connect",
+          "description": "Operation mode that selects the requested behavior."
+        },
+        "cdp_endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Literal loopback Chrome DevTools Protocol endpoint."
+        },
+        "target_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact CDP target identifier selected from the endpoint's target listing."
+        }
+      },
+      "required": [
+        "mode",
+        "cdp_endpoint",
+        "target_id"
+      ],
+      "additionalProperties": false
+    },
+    "__schema4": {
+      "description": "Required initial HTTP(S) URL. Query values must be declared separately as public literals or secret references.",
+      "$ref": "#/$defs/__schema9"
+    },
+    "__schema5": {
+      "type": "string",
+      "minLength": 1
+    },
+    "__schema6": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Exact name used by this operation."
+          },
+          "value": {
+            "$ref": "#/$defs/__schema7"
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "__schema7": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string",
+              "const": "literal"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "source",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string",
+              "const": "secret"
+            },
+            "secret_id": {
+              "$ref": "#/$defs/__schema8"
+            }
+          },
+          "required": [
+            "source",
+            "secret_id"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "__schema8": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9._\\x2d]*$"
+    },
+    "__schema9": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "$ref": "#/$defs/__schema5"
+        },
+        "query": {
+          "$ref": "#/$defs/__schema6",
+          "description": "Non-empty feature or text query to investigate."
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "__schema10": {
+      "default": {
+        "viewport": {
+          "width": 1280,
+          "height": 720,
+          "device_scale_factor": 1
+        },
+        "locale": "en-US",
+        "timezone": "UTC",
+        "color_scheme": "light",
+        "reduced_motion": "reduce",
+        "service_workers": "block"
+      },
+      "description": "Optional deterministic browser settings. Defaults to 1280x720, en-US, UTC, light mode, reduced motion, and blocked service workers.",
+      "$ref": "#/$defs/__schema11"
+    },
+    "__schema11": {
+      "type": "object",
+      "properties": {
+        "viewport": {
+          "default": {
+            "width": 1280,
+            "height": 720,
+            "device_scale_factor": 1
+          },
+          "type": "object",
+          "properties": {
+            "width": {
+              "default": 1280,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "height": {
+              "default": 720,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "device_scale_factor": {
+              "default": 1,
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "locale": {
+          "default": "en-US",
+          "type": "string",
+          "minLength": 2,
+          "pattern": "^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$"
+        },
+        "timezone": {
+          "default": "UTC",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_+\\x2d]+(?:\\x2f[A-Za-z0-9_+\\x2d]+)*$"
+        },
+        "color_scheme": {
+          "default": "light",
+          "type": "string",
+          "enum": [
+            "light",
+            "dark",
+            "no-preference"
+          ]
+        },
+        "reduced_motion": {
+          "default": "reduce",
+          "type": "string",
+          "enum": [
+            "reduce",
+            "no-preference"
+          ]
+        },
+        "service_workers": {
+          "default": "block",
+          "type": "string",
+          "enum": [
+            "allow",
+            "block"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "__schema12": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/__schema13"
+      },
+      "description": "Required sequence of explicit browser actions."
+    },
+    "__schema13": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "step_id": {
+              "$ref": "#/$defs/__schema8"
+            },
+            "timeout_ms": {
+              "$ref": "#/$defs/__schema14",
+              "description": "Optional action deadline in milliseconds; omitted means wait until completion or request cancellation."
+            },
+            "action": {
+              "type": "string",
+              "const": "goto"
+            },
+            "destination": {
+              "$ref": "#/$defs/__schema9"
+            },
+            "wait_until": {
+              "type": "string",
+              "enum": [
+                "commit",
+                "domcontentloaded",
+                "load"
+              ]
+            }
+          },
+          "required": [
+            "step_id",
+            "action",
+            "destination",
+            "wait_until"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "step_id": {
+              "$ref": "#/$defs/__schema8"
+            },
+            "timeout_ms": {
+              "$ref": "#/$defs/__schema14",
+              "description": "Optional action deadline in milliseconds; omitted means wait until completion or request cancellation."
+            },
+            "action": {
+              "type": "string",
+              "const": "click"
+            },
+            "locator": {
+              "$ref": "#/$defs/__schema16"
+            },
+            "button": {
+              "default": "left",
+              "type": "string",
+              "enum": [
+                "left",
+                "middle",
+                "right"
+              ]
+            },
+            "click_count": {
+              "default": 1,
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "step_id",
+            "action",
+            "locator"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "step_id": {
+              "$ref": "#/$defs/__schema8"
+            },
+            "timeout_ms": {
+              "$ref": "#/$defs/__schema14",
+              "description": "Optional action deadline in milliseconds; omitted means wait until completion or request cancellation."
+            },
+            "action": {
+              "type": "string",
+              "const": "fill"
+            },
+            "locator": {
+              "$ref": "#/$defs/__schema16"
+            },
+            "value": {
+              "$ref": "#/$defs/__schema7"
+            }
+          },
+          "required": [
+            "step_id",
+            "action",
+            "locator",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "step_id": {
+              "$ref": "#/$defs/__schema8"
+            },
+            "timeout_ms": {
+              "$ref": "#/$defs/__schema14",
+              "description": "Optional action deadline in milliseconds; omitted means wait until completion or request cancellation."
+            },
+            "action": {
+              "type": "string",
+              "const": "press"
+            },
+            "locator": {
+              "$ref": "#/$defs/__schema16"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "step_id",
+            "action",
+            "locator",
+            "key"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "step_id": {
+              "$ref": "#/$defs/__schema8"
+            },
+            "timeout_ms": {
+              "$ref": "#/$defs/__schema14",
+              "description": "Optional action deadline in milliseconds; omitted means wait until completion or request cancellation."
+            },
+            "action": {
+              "type": "string",
+              "const": "select_option"
+            },
+            "locator": {
+              "$ref": "#/$defs/__schema16"
+            },
+            "value": {
+              "$ref": "#/$defs/__schema7"
+            }
+          },
+          "required": [
+            "step_id",
+            "action",
+            "locator",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "step_id": {
+              "$ref": "#/$defs/__schema8"
+            },
+            "timeout_ms": {
+              "$ref": "#/$defs/__schema14",
+              "description": "Optional action deadline in milliseconds; omitted means wait until completion or request cancellation."
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "check",
+                "uncheck"
+              ]
+            },
+            "locator": {
+              "$ref": "#/$defs/__schema16"
+            }
+          },
+          "required": [
+            "step_id",
+            "action",
+            "locator"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "step_id": {
+              "$ref": "#/$defs/__schema8"
+            },
+            "timeout_ms": {
+              "$ref": "#/$defs/__schema14",
+              "description": "Optional action deadline in milliseconds; omitted means wait until completion or request cancellation."
+            },
+            "action": {
+              "type": "string",
+              "const": "wait_for"
+            },
+            "locator": {
+              "$ref": "#/$defs/__schema16"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "attached",
+                "detached",
+                "visible",
+                "hidden"
+              ]
+            }
+          },
+          "required": [
+            "step_id",
+            "action",
+            "locator",
+            "state"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "step_id": {
+              "$ref": "#/$defs/__schema8"
+            },
+            "action": {
+              "type": "string",
+              "const": "wait_for_timeout"
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "description": "Wait this many milliseconds; the wait ends early on cancellation."
+            }
+          },
+          "required": [
+            "step_id",
+            "action",
+            "duration_ms"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "__schema14": {
+      "description": "Optional action deadline in milliseconds; omitted means wait until completion or request cancellation.",
+      "$ref": "#/$defs/__schema15"
+    },
+    "__schema15": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "__schema16": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "test_id"
+            },
+            "value": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "role"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "button",
+                "checkbox",
+                "combobox",
+                "dialog",
+                "link",
+                "listbox",
+                "menuitem",
+                "option",
+                "radio",
+                "slider",
+                "spinbutton",
+                "switch",
+                "tab",
+                "textbox"
+              ]
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Exact name used by this operation."
+            }
+          },
+          "required": [
+            "kind",
+            "role",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "css"
+            },
+            "selector": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "selector"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "__schema17": {
+      "description": "Optional initial cookies, local storage, or session storage. Defaults to empty; every supplied value and origin must be declared and within the allowed origins.",
+      "$ref": "#/$defs/__schema18"
+    },
+    "__schema18": {
+      "type": "object",
+      "properties": {
+        "cookies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Exact name used by this operation."
+              },
+              "value": {
+                "$ref": "#/$defs/__schema7"
+              },
+              "destination": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "http_only": {
+                "type": "boolean"
+              },
+              "secure": {
+                "type": "boolean"
+              },
+              "same_site": {
+                "type": "string",
+                "enum": [
+                  "Strict",
+                  "Lax",
+                  "None"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "value",
+              "destination",
+              "http_only",
+              "secure",
+              "same_site"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "local_storage": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "origin": {
+                "$ref": "#/$defs/__schema19"
+              },
+              "entries": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema20"
+                }
+              }
+            },
+            "required": [
+              "origin",
+              "entries"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "session_storage": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "origin": {
+                "$ref": "#/$defs/__schema19"
+              },
+              "entries": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/__schema20"
+                }
+              }
+            },
+            "required": [
+              "origin",
+              "entries"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "__schema19": {
+      "type": "string",
+      "minLength": 1
+    },
+    "__schema20": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact name used by this operation."
+        },
+        "value": {
+          "$ref": "#/$defs/__schema7"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "__schema21": {
+      "default": [],
+      "description": "Optional environment-variable references for values used in actions, URLs, storage, or replay, and for redacting matching observed text. Secret values are never supplied inline.",
+      "$ref": "#/$defs/__schema22"
+    },
+    "__schema22": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "secret_id": {
+            "$ref": "#/$defs/__schema8"
+          },
+          "environment_variable": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "secret_id",
+          "environment_variable"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "__schema23": {
+      "default": {
+        "after_each_step": [],
+        "at_end": [
+          "url"
+        ],
+        "events": [],
+        "network": {
+          "request_body": false,
+          "response_body": false,
+          "header_values": false
+        }
+      },
+      "description": "Optional retained artifacts and event families. Defaults to only a final sanitized URL; request screenshots, DOM, accessibility, history, storage, and event capture explicitly.",
+      "$ref": "#/$defs/__schema24"
+    },
+    "__schema24": {
+      "type": "object",
+      "properties": {
+        "after_each_step": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema25"
+          }
+        },
+        "at_end": {
+          "default": [
+            "url"
+          ],
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/__schema25"
+          }
+        },
+        "events": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "console",
+              "page-errors",
+              "network",
+              "websockets",
+              "frames",
+              "workers",
+              "popups",
+              "downloads"
+            ]
+          }
+        },
+        "network": {
+          "default": {
+            "request_body": false,
+            "response_body": false,
+            "header_values": false
+          },
+          "type": "object",
+          "properties": {
+            "request_body": {
+              "default": false,
+              "type": "boolean"
+            },
+            "response_body": {
+              "default": false,
+              "type": "boolean"
+            },
+            "header_values": {
+              "default": false,
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "__schema25": {
+      "type": "string",
+      "enum": [
+        "screenshot",
+        "dom",
+        "accessibility",
+        "url",
+        "history",
+        "storage"
+      ]
+    }
+  },
+  "examples": [
+    {
+      "browser": {
+        "mode": "launch",
+        "executable_path": "/opt/chromium/chrome"
+      },
+      "start_url": {
+        "url": "https://app.example.test/",
+        "query": []
+      },
+      "actions": [
+        {
+          "step_id": "settle",
+          "action": "wait_for_timeout",
+          "duration_ms": 250
+        }
+      ]
+    }
+  ]
+}

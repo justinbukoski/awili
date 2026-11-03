@@ -1,0 +1,13 @@
+{
+  "scenario": "parallel-tool-calls",
+  "dialect": "chat-completions",
+  "endpoint": "http://10.77.68.83:8001/v1/chat/completions",
+  "model": "nemotron-3.5-lightning",
+  "captured_at": 1786577288,
+  "http_status": 200,
+  "sse_event_count": 48,
+  "saw_done_sentinel": true,
+  "response_bytes": 11429,
+  "capture_error": null,
+  "note": "Multiple concurrent tool_calls distinguished by choices[].delta.tool_calls[].index (0 and 1)."
+}

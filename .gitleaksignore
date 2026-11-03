@@ -1,0 +1,6 @@
+# Reviewed false positives: documentation-example or obviously fake token
+# strings used by redaction tests (they must look like secrets to test scrubbing).
+crates/awili-app/src/code_reopen_tests.rs:generic-api-key:259
+crates/awili-app/src/provider_build.rs:generic-api-key:263
+crates/awili-selftest/src/graduation_tests.rs:generic-api-key:140
+crates/awili-selftest/src/graduation_tests.rs:github-pat:194

@@ -1,0 +1,3 @@
+SYNTHETIC fixture: real 02 capture truncated mid-arguments to exercise P6
+(decoder must fail typed, never panic). Not observed live; servers do not
+emit malformed JSON on demand.

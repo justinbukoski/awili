@@ -1,0 +1,21 @@
+[package]
+name = "awili-feed"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+rusqlite = { workspace = true }
+dirs = { workspace = true }
+awili-config = { path = "../awili-config" }
+
+[dev-dependencies]
+# Build in-memory `reqwest::blocking::Response`s to exercise `parse_success` /
+# `parse_answer`'s status-gate and JSON-parse arms without a live socket
+# (reqwest's `blocking::Response: From<http::Response<_>>`). Already in the lock
+# transitively via reqwest, so this pins no new fetch.
+http = { workspace = true }

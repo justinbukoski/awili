@@ -1,0 +1,16 @@
+[package]
+name = "awili-skills"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+# Render logging records only injected skill names, never prompt text.
+# Already in the tree via gpui, so no new
+# crate version enters the lockfile.
+tracing = "0.1"
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

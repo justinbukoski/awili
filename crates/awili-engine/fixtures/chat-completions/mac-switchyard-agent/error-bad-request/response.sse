@@ -1,0 +1,1 @@
+{"error":{"code":"upstream_error","message":"1 validation error:\n  {'type': 'missing', 'loc': ('body', 'messages'), 'msg': 'Field required', 'input': {'max_tokens': 16, 'model': 'nemotron-3.5-lightning', 'stream': True, 'stream_options': {'include_usage': True}}}","type":"upstream_error"}}

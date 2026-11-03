@@ -1,0 +1,22 @@
+[package]
+name = "awili-engine-sandbox"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+version.workspace = true
+edition.workspace = true
+
+# C3: filesystem enforcement. Unlike the pure engine crates this one DOES
+# perform IO — that is its job — but it holds no async runtime and no gpui.
+[dependencies]
+awili-engine-log = { path = "../awili-engine-log" }
+awili-engine = { path = "../awili-engine" }
+thiserror = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+# Unit 4 (design r7): shared test-authority fixture for this package's test
+# targets. Dev-only — never in the production feature graph.
+awili-engine-log = { path = "../awili-engine-log", features = ["test-authority"] }

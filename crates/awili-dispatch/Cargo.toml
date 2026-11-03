@@ -1,0 +1,36 @@
+[package]
+name = "awili-dispatch"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/justinbukoski/awili"
+version.workspace = true
+edition.workspace = true
+
+# RC2-R4 (TOP43 #10): `host` builds the runner host's modules (store, runner,
+# worker, endpoint, supervisor). The binaries need it; the app's dependency
+# turns it off and gets only the client (protocol, ssh, supervised).
+[features]
+default = ["host"]
+host = []
+
+[[bin]]
+name = "awili-build-runner"
+path = "src/bin/awili-build-runner.rs"
+required-features = ["host"]
+
+[[bin]]
+name = "awili-build-endpoint"
+path = "src/bin/awili-build-endpoint.rs"
+required-features = ["host"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+sha2 = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs", "process"] }
+
+[dev-dependencies]
+tempfile = "3"
