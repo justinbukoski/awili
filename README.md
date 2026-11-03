@@ -58,7 +58,7 @@ drag Awili to Applications. The app is signed and notarized by Apple, so it
 opens normally.
 
 **Windows 10/11 (x64), Preview.** Unzip `Awili-0.3.0-rc.1-windows-x64.zip` anywhere and run
-`awili-app.exe`. The build is **not code-signed**, so Windows SmartScreen will
+`Awili.exe`. The build is **not code-signed**, so Windows SmartScreen will
 say "Windows protected your PC". Choose **More info**, then **Run anyway**. (If
 you would rather not, build it from source; see below.)
 
