@@ -9,6 +9,15 @@ and it runs on macOS, Windows and Linux.
 This is a release candidate (`0.3.0-rc.1`). It works day to day for its author,
 but expect rough edges.
 
+> **Written by AI.** Almost all of Awili's code, tests, packaging scripts and
+> documentation, this README included, were written by AI models working as
+> coding agents: Anthropic's Claude models (through Claude Code), OpenAI's
+> Codex, and models from DeepSeek, Zhipu (GLM) and Alibaba (Qwen). Changes were
+> also reviewed by AI models other than the one that wrote them. A human
+> (the project's owner) chose what to build, made the decisions, tested the
+> app and approved releases, but did not write most of the code by hand.
+> Read it, test it and judge it with that in mind.
+
 | Windows | Linux |
 |---|---|
 | ![Awili on Windows 11: the main window with the More menu open](docs/screenshots/windows-menu.png) | ![Awili on Linux: the first-run welcome screen](docs/screenshots/linux-welcome.png) |
@@ -53,24 +62,59 @@ Download the file for your system from the Releases page.
 | Linux (x86_64) | Release candidate | `Awili-0.3.0-rc.1-linux-x86_64.tar.gz` |
 | Windows 10/11 (x64) | **Preview**, unsigned | `Awili-0.3.0-rc.1-windows-x64.zip` |
 
-**macOS (Apple Silicon and Intel), release candidate.** Open `Awili-0.3.0-rc.1-macos-universal.dmg` and
-drag Awili to Applications. The app is signed and notarized by Apple, so it
-opens normally.
+### Before you start
 
-**Windows 10/11 (x64), Preview.** Unzip `Awili-0.3.0-rc.1-windows-x64.zip` anywhere and run
-`Awili.exe`. The build is **not code-signed**, so Windows SmartScreen will
-say "Windows protected your PC". Choose **More info**, then **Run anyway**. (If
-you would rather not, build it from source; see below.)
+Awili does its work through an AI tool you install and sign in to yourself.
+Install **Claude Code** or **Codex** and sign in to it once from a terminal
+before opening Awili. API keys for OpenAI, Anthropic or a compatible service are
+optional; you add them in Settings, and they power Council and Chat.
 
-**Linux (x86_64), release candidate.** Unpack `Awili-0.3.0-rc.1-linux-x86_64.tar.gz` and run
-`./install.sh` (or run `./awili-app` directly). You need a Wayland or X11
-desktop with Vulkan drivers installed (built on Fedora 44; other distributions are
-untested). To have Awili remember API keys you also need a Secret Service
-keyring such as GNOME Keyring or KWallet.
+### macOS (Apple Silicon and Intel), release candidate
 
-First launch shows a welcome screen. Pick how you want to connect (an installed
-agent such as Claude Code or Codex, or a model server or API key) and follow
-the prompts. A sample configuration with every option explained is in
+1. Download `Awili-0.3.0-rc.1-macos-universal.dmg` and open it.
+2. Drag **Awili** to **Applications**.
+3. Open Awili from Applications. It is signed and notarized by Apple, so it
+   opens without a security warning.
+
+To remove it, drag Awili from Applications to the Trash. Settings and
+conversations are in `~/Library/Application Support/Awili`.
+
+### Windows 10/11 (x64), preview
+
+1. Download `Awili-0.3.0-rc.1-windows-x64.zip` and unzip it anywhere (for
+   example `Documents\Awili`).
+2. Double-click `Awili.exe`.
+3. Windows says "Windows protected your PC" because this build is **not
+   code-signed**. Click **More info**, then **Run anyway**. (If you would rather
+   not, build it from source; see below.)
+4. If the welcome screen says Work isn't set up, check that Claude Code or Codex
+   is installed and signed in, then click **Check again**.
+5. Keep Work in **Plan first** mode (top right) so you see what it intends
+   before it acts. Windows has no agent sandbox yet.
+
+To remove it, delete the folder you unzipped, then `%APPDATA%\Awili` and
+`%LOCALAPPDATA%\Awili`. Saved API keys are listed in Credential Manager under
+`dev.awili.Awili`.
+
+### Linux (x86_64), release candidate
+
+1. Download `Awili-0.3.0-rc.1-linux-x86_64.tar.gz` and unpack it:
+   `tar xzf Awili-0.3.0-rc.1-linux-x86_64.tar.gz`
+2. In the unpacked folder, run `./install.sh`. It installs for your user only
+   (no sudo) and adds Awili to your app menu. Or run `./awili-app` directly.
+3. You need a Wayland or X11 desktop with Vulkan drivers (or Mesa's software
+   renderer). To save API keys you also need a Secret Service keyring such as
+   GNOME Keyring or KWallet. Built and tested on Fedora 44; other distributions
+   are untested.
+
+To remove it, run `./uninstall.sh` from the same folder. Your data in
+`~/.local/share/awili` and `~/.config/awili` is kept; delete those folders too
+if you want everything gone.
+
+### First launch
+
+The welcome screen checks for Claude Code or Codex. Pick how you want to connect
+and follow the prompts. A sample configuration with every option explained is in
 [`config.example.toml`](config.example.toml); the settings screen edits the same file.
 
 ## Known limits
