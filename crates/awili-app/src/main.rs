@@ -16212,8 +16212,16 @@ fn main() {
         #[cfg(not(target_os = "linux"))]
         let default_size = size(px(900.), px(680.));
         let bounds = match winbounds::load().filter(|b| {
-            winbounds::visible_on_any(&primary, *b) && app_lifecycle::restorable(b.w, b.h)
+            // Wayland may not have announced outputs before the first window.
+            // Keep valid saved dimensions and let the compositor place them.
+            #[cfg(target_os = "linux")]
+            let visible = primary.is_empty() || winbounds::visible_on_any(&primary, *b);
+            #[cfg(not(target_os = "linux"))]
+            let visible = winbounds::visible_on_any(&primary, *b);
+            visible && app_lifecycle::restorable(b.w, b.h)
         }) {
+            #[cfg(target_os = "linux")]
+            Some(b) if primary.is_empty() => Bounds::centered(None, size(px(b.w), px(b.h)), cx),
             Some(b) => Bounds::new(gpui::point(px(b.x), px(b.y)), size(px(b.w), px(b.h))),
             None => Bounds::centered(launch_display.as_ref().map(|d| d.id()), default_size, cx),
         };
