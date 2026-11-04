@@ -52,6 +52,7 @@ pub struct Chip {
     label: SharedString,
     icon: Option<Icon>,
     dropdown: bool,
+    outline: Option<Tone>,
     dot: Option<Tone>,
     file_name: Option<SharedString>,
     tone: Option<Tone>,
@@ -74,6 +75,7 @@ impl Chip {
             label,
             icon: None,
             dropdown: false,
+            outline: None,
             dot: None,
             file_name: None,
             tone: None,
@@ -88,6 +90,12 @@ impl Chip {
     /// strip's 11 px type, a 4 px inset, no taller than the row.
     pub fn compact(mut self) -> Self {
         self.compact = true;
+        self
+    }
+
+    /// A persistent semantic outline without changing the label or icon colour.
+    pub fn outlined(mut self, tone: Tone) -> Self {
+        self.outline = Some(tone);
         self
     }
 
@@ -297,12 +305,24 @@ impl RenderOnce for Chip {
             .items_center()
             .gap(theme::z(theme::SP_4))
             .px(theme::z(if compact { theme::SP_4 } else { theme::SP_8 }))
-            .h(if compact { theme::z(theme::STRIP_H) } else { theme::target() })
-            .min_w(if compact { theme::z(theme::STRIP_H) } else { theme::target() })
+            .h(if compact {
+                theme::z(theme::STRIP_H)
+            } else {
+                theme::target()
+            })
+            .min_w(if compact {
+                theme::z(theme::STRIP_H)
+            } else {
+                theme::target()
+            })
             .rounded(theme::z(theme::RADIUS_S))
             .bg(fill)
-            .when(self.dropdown, |d| {
-                d.border_1().border_color(theme::palette().control_line)
+            .when(self.dropdown || self.outline.is_some(), |d| {
+                d.border_1().border_color(
+                    self.outline
+                        .map(theme::tone_color)
+                        .unwrap_or_else(|| theme::palette().control_line),
+                )
             })
             .when_some(status_dot, |d, dot| d.child(dot))
             .when_some(leading, |d, which| {

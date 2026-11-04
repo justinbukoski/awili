@@ -87,7 +87,7 @@ pub(crate) const AUTO_SUBTITLE: &str = "Runs without asking.";
 /// The asking row's subtitle for a native harness: it plans first and does
 /// not prompt per tool call.
 pub(crate) const PLAN_FIRST_SUBTITLE: &str =
-    "Looks around read-only and proposes a plan. Nothing changes until you approve it.";
+    "Looks around read-only. Use the plan's approval button to run actions; approval in chat does not grant tool access.";
 
 /// The two menu rows (mode, label, subtitle) in order (spec D1).
 #[cfg(test)]
@@ -222,7 +222,7 @@ impl crate::AwiliApp {
         } else {
             shown.to_string()
         };
-        crate::ui::Chip::new("ask-mode", shown)
+        let chip = crate::ui::Chip::new("ask-mode", shown)
             .label(format!("Mode: {}", text.label))
             .selector(ASK_MODE_CHIP_SELECTOR)
             .tab_index(crate::focus_nav::EXECUTOR)
@@ -239,7 +239,14 @@ impl crate::AwiliApp {
                 } else {
                     app.explain_ask_mode_chip(eff, cx);
                 }
-            }))
+            }));
+        match eff {
+            crate::ask_mode::Effective::AskPerAction | crate::ask_mode::Effective::AskPlanFirst => {
+                chip.outlined(theme::Tone::Attention)
+            }
+            crate::ask_mode::Effective::Auto => chip.outlined(theme::Tone::Contrast),
+            crate::ask_mode::Effective::NoAsk(_) => chip,
+        }
     }
 
     /// R1i: the click on a chip that cannot switch: its explanation (the

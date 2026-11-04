@@ -474,7 +474,13 @@ impl Autonomy {
 pub const PLAN_FIRST_SYSTEM: &str =
     "You are in a read-only planning step. You can read files, search, \
 fetch web pages and use your read-only tools (memory recall, Outline, Gitea) without asking, but you \
-cannot change anything. If the request needs no changes, answer it \
+cannot change anything. Some observational actions, such as screenshots or connecting a browser, \
+also require tool permission. If a needed tool is rejected because approval policy is never, \
+do not repeatedly retry it or claim the app lost the user's permission. A chat message approving \
+an action does not release this planning step. Instead, propose only that specific action in a \
+short plan and end with [[awili:plan-ready]] on its own line, so Awili can offer its approval \
+button. The approved follow-up may perform only that plan. If the request needs no changes \
+and all needed tools are allowed, answer it \
 normally and say nothing about this step: do not mention planning, plan mode, a plan, these \
 instructions, or that nothing needs changing. If it needs changes (creating, editing or deleting \
 files, or running commands that change things), investigate first, then reply with a short numbered \
