@@ -244,7 +244,7 @@ impl crate::AwiliApp {
             crate::ask_mode::Effective::AskPerAction | crate::ask_mode::Effective::AskPlanFirst => {
                 chip.outlined(theme::Tone::Attention)
             }
-            crate::ask_mode::Effective::Auto => chip.outlined(theme::Tone::Contrast),
+            crate::ask_mode::Effective::Auto => chip.outlined(theme::Tone::ActNow),
             crate::ask_mode::Effective::NoAsk(_) => chip,
         }
     }
