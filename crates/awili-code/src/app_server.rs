@@ -12,13 +12,11 @@
 //! conversation; thread ids from `codex exec` resume too) → `turn/start` →
 //! notifications until `turn/completed`.
 //!
-//! Posture (the same as the exec path's flags): approval policy `never`
-//! (nothing ever waits on a prompt Awili cannot show), sandbox `read-only`
-//! for the read-only planning step of "Ask before changes" and the Chat,
-//! `danger-full-access` otherwise (never sandboxed — see
-//! [`CodeEngine::permission_args`](crate::CodeEngine::permission_args)).
-//! A request the server still sends (an approval, an MCP elicitation) is
-//! declined, as `exec` refuses it under `never`.
+//! Planning turns use `never` and `read-only`. Autonomous turns use
+//! `on-request` with Codex's automatic reviewer and `danger-full-access`:
+//! eligible MCP calls can be reviewed instead of being refused by `never`.
+//! Requests that still need human input are declined; Awili never fabricates
+//! consent or form answers. The posture is sent on thread open and turn start.
 
 use std::collections::HashSet;
 
@@ -32,8 +30,21 @@ const THREAD: u64 = 2;
 const FORK: u64 = 4;
 const TURN: u64 = 3;
 
-/// The approval policy every turn runs with.
-pub const APPROVAL_POLICY: &str = "never";
+/// Planning cannot acquire approval to change things. Autonomous turns let
+/// Codex review eligible requests without requiring a host approval dialog.
+pub fn approval_policy(autonomy: Autonomy) -> &'static str {
+    match autonomy {
+        Autonomy::AskFirst => "never",
+        Autonomy::Autonomous => "on-request",
+    }
+}
+
+pub fn approvals_reviewer(autonomy: Autonomy) -> &'static str {
+    match autonomy {
+        Autonomy::AskFirst => "user",
+        Autonomy::Autonomous => "auto_review",
+    }
+}
 
 /// The sandbox a turn runs in: read-only for the planning step (and the
 /// Chat), full access otherwise.
@@ -183,6 +194,12 @@ impl AppServerTurn {
             json!({
                 "threadId": self.thread_id.as_deref().unwrap_or_default(),
                 "input": awili_image_content::codex(&self.spec.prompt),
+                "approvalPolicy": approval_policy(self.spec.autonomy),
+                "approvalsReviewer": approvals_reviewer(self.spec.autonomy),
+                "sandboxPolicy": match self.spec.autonomy {
+                    Autonomy::AskFirst => json!({"type": "readOnly", "networkAccess": false}),
+                    Autonomy::Autonomous => json!({"type": "dangerFullAccess"}),
+                },
                 // RC2-R615: Codex streams a short summary of its thinking,
                 // so a long think shows what it is about.
                 "summary": "auto",
@@ -334,7 +351,8 @@ impl AppServerTurn {
         let mut params = json!({
             "cwd": self.spec.cwd,
             "sandbox": sandbox_mode(self.spec.autonomy),
-            "approvalPolicy": APPROVAL_POLICY,
+            "approvalPolicy": approval_policy(self.spec.autonomy),
+            "approvalsReviewer": approvals_reviewer(self.spec.autonomy),
         });
         if let Some(m) = self.spec.model.as_deref().filter(|m| !m.trim().is_empty()) {
             params["model"] = json!(m);
@@ -667,10 +685,10 @@ fn request(id: u64, method: &str, params: Value) -> String {
     json!({"method": method, "id": id, "params": params}).to_string()
 }
 
-/// The answer to a request the server sends Awili. Approval policy
-/// `never` means none should come; any that does is declined, as `codex
-/// exec` refuses under `never`, and a request Awili does not know gets a
-/// JSON-RPC error — the turn never waits on it.
+/// Human-only requests are refused even in Auto: eligible approvals have
+/// already been routed to Codex's automatic reviewer. Never blanket-accept
+/// an MCP form, URL confirmation, or request for additional permissions.
+/// Unknown requests get a JSON-RPC error, so the turn never waits on one.
 fn answer_server_request(id: &Value, method: &str) -> String {
     let result = match method {
         "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {

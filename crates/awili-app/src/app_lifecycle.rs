@@ -1,10 +1,10 @@
 //! U3d window/app-command helpers: ⌘Q quit-confirmation, native About,
 //! minimum window size, and the ⌘Q/⌘H/⌥⌘H key bindings.
 //!
-//! The window/app command behaviour (⌘W hides, red button hides, ⌘Q confirms
-//! while runs are in flight) is wired in `main.rs` and `native_menu.rs`; this
-//! module holds the pure helpers, the `AwiliApp` methods those hooks call, and
-//! the `u3d_` proof tests.
+//! Window Close hides on macOS and requests Quit on other platforms. Quit
+//! confirms while runs are in flight. This is wired in `main.rs` and
+//! `native_menu.rs`; this module holds the pure helpers, the `AwiliApp` methods
+//! those hooks call, and the `u3d_` proof tests.
 
 use gpui::{
     App, ClipboardItem, Context, FocusHandle, Global, KeyBinding, PromptButton, PromptLevel, Window,
@@ -138,9 +138,12 @@ pub fn quit_prompt(n: usize) -> Option<(String, String)> {
     } else {
         format!("{n} runs in progress — quit anyway?")
     };
-    let detail =
+    let detail = if cfg!(target_os = "macos") {
         "Quitting stops them. Close the window instead (⌘W) to keep them running in the background."
-            .to_string();
+    } else {
+        "Quitting stops these runs. Choose Cancel to keep Awili and its runs open."
+    }
+    .to_string();
     Some((msg, detail))
 }
 
@@ -263,20 +266,22 @@ impl AwiliApp {
     }
 }
 
-/// D7: ⌘W and the red button hide Awili; the window and its runs live on.
-/// Tests count the calls instead: gpui's test platform panics on `hide`.
+/// macOS Close hides Awili; other platforms close through the Quit
+/// confirmation because their platform does not implement application hide.
 pub fn hide_app(cx: &mut App) {
-    #[cfg(not(test))]
+    #[cfg(all(target_os = "macos", not(test)))]
     cx.hide();
-    #[cfg(test)]
+    #[cfg(all(target_os = "macos", test))]
     {
         let _ = cx;
         tests::HIDES.with(|n| n.set(n.get() + 1));
     }
+    #[cfg(not(target_os = "macos"))]
+    native_menu::request_quit(cx);
 }
 
-/// D7: the red button hides instead of closing (`main` calls this inside
-/// `open_window`); returning `false` keeps the window.
+/// macOS hides instead of closing; other platforms request Quit, including
+/// confirmation for active runs. The window survives while that resolves.
 pub fn hide_on_close(window: &mut Window, cx: &mut App) {
     window.on_window_should_close(cx, |_window, cx| {
         hide_app(cx);
@@ -428,8 +433,12 @@ mod tests {
         let (msg, detail) = quit_prompt(1).unwrap();
         assert_eq!(msg, "1 run in progress — quit anyway?");
         assert!(
-            detail.contains("⌘W"),
-            "detail must name the keep-running path"
+            detail.contains(if cfg!(target_os = "macos") {
+                "⌘W"
+            } else {
+                "Cancel"
+            }),
+            "detail must name the supported keep-running path"
         );
         let (msg3, _) = quit_prompt(3).unwrap();
         assert_eq!(msg3, "3 runs in progress — quit anyway?");
@@ -576,8 +585,12 @@ mod tests {
             .expect("the pending prompt must carry text");
         assert!(msg.contains("1 run in progress"), "got: {msg:?}");
         assert!(
-            detail.contains("⌘W"),
-            "detail must name the keep-running path, got: {detail:?}"
+            detail.contains(if cfg!(target_os = "macos") {
+                "⌘W"
+            } else {
+                "Cancel"
+            }),
+            "detail must name the supported keep-running path, got: {detail:?}"
         );
         // Cancel resolves, the guard clears, the app keeps running.
         cx.simulate_prompt_answer("Cancel");
@@ -671,6 +684,7 @@ mod tests {
     /// D7: ⌘W, dispatched through the app's real menu actions, hides Awili;
     /// the window (and the runs it owns) survives.
     #[gpui::test]
+    #[cfg(target_os = "macos")]
     fn u3d_close_window_action_hides_not_quits(cx: &mut gpui::TestAppContext) {
         if !isolated("app_lifecycle::tests::u3d_close_window_action_hides_not_quits") {
             return;
@@ -685,8 +699,10 @@ mod tests {
         assert!(window.update(cx, |_, _, _| ()).is_ok(), "and still updates");
     }
 
+    #[cfg(target_os = "macos")]
     struct Blank;
 
+    #[cfg(target_os = "macos")]
     impl gpui::Render for Blank {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl gpui::IntoElement {
             gpui::div()
@@ -696,6 +712,7 @@ mod tests {
     /// D7: the red button's should-close callback hides Awili and returns
     /// `false`, so the window survives.
     #[gpui::test]
+    #[cfg(target_os = "macos")]
     fn u3d_red_button_should_close_returns_false(cx: &mut gpui::TestAppContext) {
         let (_view, window) = cx.add_window_view(|window, cx| {
             hide_on_close(window, cx);
@@ -707,6 +724,47 @@ mod tests {
         // `main` registers it on the real window.
         let main = include_str!("main.rs");
         assert!(main.contains("app_lifecycle::hide_on_close(window, cx);"));
+    }
+
+    /// Closing on Linux/Windows reaches Quit's cancellation-safe confirmation,
+    /// rather than the platform's unimplemented hide operation.
+    #[cfg(not(target_os = "macos"))]
+    #[gpui::test]
+    fn non_macos_close_requests_quit_and_cancel_allows_retry(cx: &mut gpui::TestAppContext) {
+        if !isolated("app_lifecycle::tests::non_macos_close_requests_quit_and_cancel_allows_retry")
+        {
+            return;
+        }
+        cx.update(crate::install_native_menu_actions);
+        let (app, window) = cx.add_window_view(|window, cx| {
+            hide_on_close(window, cx);
+            AwiliApp::new(cx)
+        });
+        window.update(|window, cx| {
+            cx.set_global(crate::AwiliWindow(
+                window.window_handle().downcast::<AwiliApp>().unwrap(),
+            ));
+        });
+        app.update(window, |app, _| app.work.running = true);
+        assert!(!window.simulate_close());
+        window.run_until_parked();
+        assert!(
+            window.has_pending_prompt(),
+            "titlebar Close must offer Quit/Cancel"
+        );
+        window.simulate_prompt_answer("Cancel");
+        window.run_until_parked();
+        assert!(!window.has_pending_prompt());
+        assert_eq!(window.windows().len(), 1);
+        window.dispatch_action(native_menu::CloseWindow);
+        window.run_until_parked();
+        assert!(
+            window.has_pending_prompt(),
+            "Close action must offer confirmation again"
+        );
+        assert_eq!(HIDES.with(|n| n.get()), 0);
+        window.simulate_prompt_answer("Cancel");
+        window.run_until_parked();
     }
 
     /// K02 (review P1): Help › Keyboard Shortcuts while focus sits on a handle

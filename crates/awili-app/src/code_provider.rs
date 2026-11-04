@@ -1224,16 +1224,7 @@ fn run_code_stream(
     // Drain stderr on its own thread so a full stderr pipe can never deadlock the
     // stdout read; JOINED before we read the buffer so the error tail is complete.
     let stderr_buf = Arc::new(Mutex::new(String::new()));
-    let stderr_handle = stderr.map(|mut err| {
-        let buf = Arc::clone(&stderr_buf);
-        std::thread::spawn(move || {
-            let mut s = String::new();
-            let _ = err.read_to_string(&mut s);
-            if let Ok(mut guard) = buf.lock() {
-                *guard = s;
-            }
-        })
-    });
+    let stderr_handle = stderr.map(|err| spawn_stderr_reader(err, Arc::clone(&stderr_buf)));
 
     // The cancel watcher kills by PROCESS GROUP id (a plain integer), so it never
     // touches the `Child` — the main thread owns it outright and `wait()`s with no
@@ -1247,8 +1238,11 @@ fn run_code_stream(
     register_group(pgid);
     let done = Arc::new(AtomicBool::new(false));
     let watcher_done = Arc::clone(&done);
+    let reap_guard = Arc::new(Mutex::new(()));
+    let watcher_guard = Arc::clone(&reap_guard);
     let watcher = std::thread::spawn(move || {
         let _ = cancel_rx.recv();
+        let _guard = watcher_guard.lock().unwrap_or_else(|e| e.into_inner());
         if !watcher_done.load(Ordering::Acquire) {
             kill_process_group(pgid);
         }
@@ -1351,7 +1345,7 @@ fn run_code_stream(
     }
 
     // Reap the leader (whether it exited on its own or the group was killed).
-    let status = child.wait().ok();
+    let status = reap_native_child(&mut child, &done, &reap_guard);
     if status.is_some() {
         if let Some(observation) = &termination_observed {
             observation.store(true, Ordering::Release);
@@ -1363,7 +1357,7 @@ fn run_code_stream(
     deregister_group(pgid);
     let _ = watcher; // detached; exits when its sender fires or drops
     if let Some(h) = stderr_handle {
-        let _ = h.join();
+        join_stderr_with_deadline(h);
     }
     let stderr = stderr_buf
         .lock()
@@ -1509,6 +1503,100 @@ pub(crate) fn deregister_group(pgid: i32) {
     }
 }
 
+/// Drain the whole pipe, retaining only the most recent 64 KiB of diagnostics.
+/// A noisy tool must neither fill its pipe nor exhaust the desktop's memory.
+/// Publish incrementally so a detached stderr holder cannot hide diagnostics
+/// already received when the bounded join stops waiting for EOF.
+pub(crate) fn spawn_stderr_reader(
+    mut reader: impl Read + Send + 'static,
+    buf: Arc<Mutex<String>>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        const CAP: usize = 64 * 1024;
+        let mut tail = Vec::with_capacity(CAP);
+        let mut chunk = [0u8; 8192];
+        loop {
+            let count = match reader.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(count) => count,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            };
+            let excess = (tail.len() + count).saturating_sub(CAP);
+            tail.drain(..excess);
+            tail.extend_from_slice(&chunk[..count]);
+            if let Ok(mut guard) = buf.lock() {
+                *guard = String::from_utf8_lossy(&tail).into_owned();
+            }
+        }
+    })
+}
+
+/// Observe exit without reaping on Unix, stop the cancellation watcher, and
+/// end remaining group members while the zombie leader still reserves its
+/// pid/pgid. Only then reap it. This avoids signaling a reused process group.
+/// Windows retains exact Job Object ownership and can clean up after wait.
+pub(crate) fn reap_native_child(
+    child: &mut std::process::Child,
+    done: &AtomicBool,
+    reap_guard: &Mutex<()>,
+) -> Option<std::process::ExitStatus> {
+    #[cfg(unix)]
+    {
+        let identity_reserved = loop {
+            match crate::proc_compat::child_exit_observed(child.id()) {
+                Ok(true) => break true,
+                Ok(false) => std::thread::sleep(std::time::Duration::from_millis(10)),
+                Err(error) if error.raw_os_error() == Some(libc::EINTR) => continue,
+                Err(_) => break false,
+            }
+        };
+        let _guard = reap_guard.lock().unwrap_or_else(|e| e.into_inner());
+        done.store(true, Ordering::Release);
+        if identity_reserved {
+            finish_exited_child_group(child.id() as i32);
+        }
+        child.wait().ok()
+    }
+    #[cfg(windows)]
+    {
+        let status = child.wait().ok();
+        let _guard = reap_guard.lock().unwrap_or_else(|e| e.into_inner());
+        done.store(true, Ordering::Release);
+        finish_exited_child_group(child.id() as i32);
+        status
+    }
+}
+
+fn finish_exited_child_group(pgid: i32) {
+    if pgid <= 1 {
+        return;
+    }
+    #[cfg(unix)]
+    // SAFETY: the Unix caller has observed exit without reaping, so the leader
+    // still reserves this group id. No pointer arguments are involved.
+    unsafe {
+        libc::kill(-pgid, libc::SIGKILL);
+    }
+    #[cfg(windows)]
+    crate::proc_compat::kill_pid_reporting(pgid as u32);
+}
+
+/// A detached descendant can retain stderr even after the owned group ends.
+/// It must not prevent completion or leave Stop waiting forever. Dropping an
+/// unfinished JoinHandle detaches only the reader, never blocks the UI turn.
+pub(crate) fn join_stderr_with_deadline(handle: std::thread::JoinHandle<()>) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !handle.is_finished() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    if handle.is_finished() {
+        let _ = handle.join();
+    } else {
+        eprintln!("awili: descendant retained stderr after the native turn ended; stopped waiting for its pipe");
+    }
+}
+
 /// SIGKILL every in-flight Code turn's process group. Wired to app-quit so a
 /// graceful quit takes the running agents (and everything they spawned) down
 /// with Awili instead of orphaning them.
@@ -1643,6 +1731,21 @@ pub(crate) fn finalize(
 mod tests {
     use super::*;
     use awili_providers::ChatMessage;
+
+    #[test]
+    fn stderr_overflow_drains_pipe_and_retains_latest_error() {
+        let mut bytes = b"obsolete early diagnostic\n".to_vec();
+        bytes.extend(std::iter::repeat_n(b'x', 1024 * 1024));
+        bytes.extend_from_slice(b"\nLAST ERROR: tool failed\n");
+        let buf = Arc::new(Mutex::new(String::new()));
+        spawn_stderr_reader(std::io::Cursor::new(bytes), Arc::clone(&buf))
+            .join()
+            .unwrap();
+        let text = buf.lock().unwrap();
+        assert_eq!(text.len(), 64 * 1024);
+        assert!(!text.contains("obsolete early diagnostic"));
+        assert!(text.ends_with("LAST ERROR: tool failed\n"));
+    }
 
     #[test]
     fn group_kill_separates_options_before_negative_pgid() {

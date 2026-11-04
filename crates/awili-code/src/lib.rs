@@ -218,7 +218,8 @@ impl CodeEngine {
     /// the same `-c` overrides the owner's config takes, so the sandbox
     /// stays visible on the argv — and again on the thread request
     /// ([`app_server`]): `sandbox_mode` read-only for the planning step,
-    /// full access otherwise, `approval_policy` never. Only Codex has one;
+    /// full access otherwise; autonomous approvals use Codex's automatic
+    /// reviewer, while planning keeps `never`. Only Codex has one;
     /// every other engine gets an empty vector.
     pub fn app_server_args(self, autonomy: Autonomy) -> Vec<String> {
         if self != CodeEngine::Codex {
@@ -229,7 +230,15 @@ impl CodeEngine {
             "-c".to_string(),
             format!("sandbox_mode=\"{}\"", app_server::sandbox_mode(autonomy)),
             "-c".to_string(),
-            format!("approval_policy=\"{}\"", app_server::APPROVAL_POLICY),
+            format!(
+                "approval_policy=\"{}\"",
+                app_server::approval_policy(autonomy)
+            ),
+            "-c".to_string(),
+            format!(
+                "approvals_reviewer=\"{}\"",
+                app_server::approvals_reviewer(autonomy)
+            ),
         ]
     }
 

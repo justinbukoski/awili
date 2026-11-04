@@ -27,6 +27,8 @@ Installing and starting
 1. Unpack this archive anywhere: tar xzf Awili-*-linux-x86_64.tar.gz
 2. Run ./install.sh. It copies Awili into ~/.local/bin and adds an app-menu
    entry and icons under ~/.local/share. It does not use sudo.
+   Builds that bundle the optional connector helper install it alongside the
+   app. Integrations still require your own settings and credentials.
 3. Start "Awili" from your app menu, or run ~/.local/bin/awili-app.
 4. The welcome screen checks for Claude Code or Codex. If it says Work isn't
    set up, install and sign in to one of them, then click "Check again".

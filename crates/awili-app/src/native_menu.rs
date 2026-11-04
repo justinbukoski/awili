@@ -41,22 +41,26 @@ pub fn install(cx: &mut App) {
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
-    cx.on_action(|_: &Quit, cx| {
-        // U3d D8: confirm before quitting when runs are in flight. The
-        // deferred pattern mirrors the other app-level menu actions so the
-        // update runs after the current window pass returns the window.
-        let Some(handle) = cx.try_global::<crate::AwiliWindow>().map(|w| w.0) else {
-            // No window yet (pre-launch) — quit directly.
-            cx.quit();
-            return;
-        };
-        cx.defer(move |cx| {
-            if let Err(error) = handle.update(cx, |app, window, cx| app.request_quit(window, cx)) {
-                eprintln!("Quit action failed: {error:#}");
-            }
-        });
-    });
+    cx.on_action(|_: &Quit, cx| request_quit(cx));
     cx.set_menus(menus());
+}
+
+/// Shared by explicit Quit and non-macOS window close. Linux has no app-hide
+/// implementation, so Close must follow the same confirmation as Quit.
+pub(crate) fn request_quit(cx: &mut App) {
+    // U3d D8: confirm before quitting when runs are in flight. The
+    // deferred pattern mirrors the other app-level menu actions so the
+    // update runs after the current window pass returns the window.
+    let Some(handle) = cx.try_global::<crate::AwiliWindow>().map(|w| w.0) else {
+        // No window yet (pre-launch) — quit directly.
+        cx.quit();
+        return;
+    };
+    cx.defer(move |cx| {
+        if let Err(error) = handle.update(cx, |app, window, cx| app.request_quit(window, cx)) {
+            eprintln!("Quit action failed: {error:#}");
+        }
+    });
 }
 
 fn menus() -> Vec<Menu> {

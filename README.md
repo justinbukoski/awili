@@ -6,7 +6,7 @@ each step and asking before it does anything risky. It is written in Rust with
 the GPUI toolkit, so it is a real native app (no browser or web view inside),
 and it runs on macOS, Windows and Linux.
 
-This is a release candidate (`0.3.0-rc.1`). It works day to day for its author,
+The current source is release candidate `0.3.0-rc.2` (see [changes](CHANGELOG.md)). It works day to day for its author,
 but expect rough edges.
 
 > **Written by AI.** Almost all of Awili's code, tests, packaging scripts and
@@ -54,7 +54,9 @@ until you configure them.
 
 ## Install
 
-Download the file for your system from the Releases page.
+Download the file for your system from the Releases page. The table below lists
+the previously published `0.3.0-rc.1` installers; it does not imply they contain
+the `0.3.0-rc.2` source fixes.
 
 | System | Status | File |
 |---|---|---|

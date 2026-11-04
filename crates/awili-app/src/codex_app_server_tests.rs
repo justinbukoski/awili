@@ -125,6 +125,65 @@ fn read_lines(path: &Path) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// A completed CLI can exit while a background MCP-like child retains stderr.
+/// Completion must end that owned child and deliver Done without waiting for
+/// its sleep to finish, even while the caller keeps its Stop sender alive.
+#[cfg(unix)]
+#[test]
+fn completed_server_reaps_background_stderr_holder() {
+    let dir = tempfile::tempdir().unwrap();
+    let after = format!(
+        "sleep 30 >/dev/null &\nprintf '%s\\n' \"$!\" > {}\n{}exit 0\n",
+        dir.path().join("background-pid").display(),
+        say(
+            r#"{"method":"turn/completed","params":{"threadId":"thr-1","turn":{"id":"turn-1","items":[],"status":"completed"}}}"#
+        ),
+    );
+    let bin = fake_server(dir.path(), None, &after);
+    let slot = Arc::new(Mutex::new(None));
+    let p = provider(&bin, dir.path(), Autonomy::Autonomous, None, slot);
+    let (_cancel, cancel_rx) = std::sync::mpsc::channel();
+    let rx = p.run(req("finish"), cancel_rx);
+    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = result_tx.send(drain(rx));
+    });
+    let result = result_rx.recv_timeout(Duration::from_secs(5));
+    if result.is_err() {
+        // Bound failure cleanup too, so a regression does not leak a fixture.
+        if let Ok(pid) = std::fs::read_to_string(dir.path().join("background-pid")) {
+            if let Ok(pid) = pid.trim().parse::<u32>() {
+                crate::proc_compat::kill_pid_reporting(pid);
+            }
+        }
+    }
+    let events = result.expect("background stderr holder blocked completed native turn");
+    assert_eq!(events.last(), Some(&ProviderEvent::Done), "{events:?}");
+    assert!(
+        !events.iter().any(|e| matches!(e, ProviderEvent::Error(_))),
+        "{events:?}"
+    );
+    let pid = std::fs::read_to_string(dir.path().join("background-pid")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let status = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", pid.trim()])
+            .output()
+            .unwrap();
+        let state = String::from_utf8_lossy(&status.stdout);
+        // An orphan killed by the group signal may await init's reap. A
+        // zombie is stopped and no longer holds a pipe or executes tools.
+        if state.trim().is_empty() || state.trim().starts_with('Z') {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "completed turn left background child running"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// RC2-CXS (R3-20 Codex part): a Codex reply streams — each piece of text
 /// arrives as Codex writes it, the complete copy is never shown twice, two
 /// messages keep their blank line, a subagent's text stays out, a stray
@@ -195,7 +254,7 @@ fn rc2_cxs_codex_reply_streams_over_the_app_server() {
     );
     assert!(
         argv.windows(2)
-            .any(|w| w == ["-c", "approval_policy=\"never\""]),
+            .any(|w| w == ["-c", "approval_policy=\"on-request\""]),
         "{argv:?}"
     );
     let sent = read_lines(&dir.path().join("stdin"));
@@ -205,7 +264,8 @@ fn rc2_cxs_codex_reply_streams_over_the_app_server() {
         ["initialize", "initialized", "thread/start", "turn/start"]
     );
     assert_eq!(sent[2]["params"]["sandbox"], "danger-full-access");
-    assert_eq!(sent[2]["params"]["approvalPolicy"], "never");
+    assert_eq!(sent[2]["params"]["approvalPolicy"], "on-request");
+    assert_eq!(sent[2]["params"]["approvalsReviewer"], "auto_review");
     assert_eq!(sent[2]["params"]["cwd"], dir.path().display().to_string());
     assert_eq!(sent[3]["params"]["threadId"], "thr-1");
     assert_eq!(sent[3]["params"]["input"][0]["text"], "tell me a story");

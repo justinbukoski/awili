@@ -4,7 +4,7 @@ set -eu
 bindir="${XDG_BIN_HOME:-$HOME/.local/bin}"
 datadir="${XDG_DATA_HOME:-$HOME/.local/share}"
 
-rm -f "$bindir/awili-app" "$datadir/applications/awili.desktop"
+rm -f "$bindir/awili-app" "$bindir/awili-connectors-mcp" "$datadir/applications/awili.desktop"
 find "$datadir/icons/hicolor" -type f -name 'awili.*' -path '*/apps/*' -delete 2>/dev/null || true
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$datadir/applications" >/dev/null 2>&1 || true
 

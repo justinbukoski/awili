@@ -21,7 +21,7 @@
 //! Codex shows each message when it is written.
 
 use crate::proc_compat::OwnProcessGroup;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError};
@@ -173,7 +173,7 @@ impl Server {
         abandon(&mut self.child);
         crate::code_provider::deregister_group(self.pgid);
         if let Some(h) = self.stderr_handle.take() {
-            let _ = h.join();
+            crate::code_provider::join_stderr_with_deadline(h);
         }
     }
 }
@@ -235,15 +235,8 @@ fn start_server(turn: &Turn<'_>) -> Option<Server> {
         return None;
     };
     let stderr_buf = Arc::new(Mutex::new(String::new()));
-    let stderr_handle = child.stderr.take().map(|mut err| {
-        let buf = Arc::clone(&stderr_buf);
-        std::thread::spawn(move || {
-            let mut s = String::new();
-            let _ = err.read_to_string(&mut s);
-            if let Ok(mut guard) = buf.lock() {
-                *guard = s;
-            }
-        })
+    let stderr_handle = child.stderr.take().map(|err| {
+        crate::code_provider::spawn_stderr_reader(err, Arc::clone(&stderr_buf))
     });
     // Lines arrive on a channel so the handshake can time out.
     let (line_tx, lines) = std::sync::mpsc::channel::<String>();
@@ -543,8 +536,11 @@ fn drive(
     let pgid = server.pgid;
     let done = Arc::new(AtomicBool::new(false));
     let watcher_done = Arc::clone(&done);
+    let reap_guard = Arc::new(Mutex::new(()));
+    let watcher_guard = Arc::clone(&reap_guard);
     std::thread::spawn(move || {
         let _ = cancel_rx.recv();
+        let _guard = watcher_guard.lock().unwrap_or_else(|e| e.into_inner());
         if !watcher_done.load(Ordering::Acquire) {
             crate::code_provider::kill_process_group(pgid);
         }
@@ -560,7 +556,7 @@ fn drive(
     }
     // Closing stdin ends the server; one that lingers is killed.
     drop(server.stdin.take());
-    let status = wait_with_grace(&mut server.child, pgid, EXIT_GRACE);
+    let status = wait_with_grace(&mut server.child, pgid, EXIT_GRACE, &done, &reap_guard);
     if status.is_some() {
         if let Some(observation) = termination_observed {
             observation.store(true, Ordering::Release);
@@ -569,7 +565,7 @@ fn drive(
     done.store(true, Ordering::Release);
     crate::code_provider::deregister_group(pgid);
     if let Some(h) = server.stderr_handle.take() {
-        let _ = h.join();
+        crate::code_provider::join_stderr_with_deadline(h);
     }
     let stderr = server
         .stderr_buf
@@ -640,15 +636,29 @@ fn wait_with_grace(
     child: &mut Child,
     pgid: i32,
     grace: Duration,
+    done: &AtomicBool,
+    reap_guard: &Mutex<()>,
 ) -> Option<std::process::ExitStatus> {
     let until = Instant::now() + grace;
     loop {
+        #[cfg(unix)]
+        {
+            if crate::proc_compat::child_has_exited(child.id()) {
+                return crate::code_provider::reap_native_child(child, done, reap_guard);
+            }
+            if Instant::now() >= until {
+                crate::code_provider::kill_process_group(pgid);
+                return crate::code_provider::reap_native_child(child, done, reap_guard);
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        #[cfg(windows)]
         match child.try_wait() {
-            Ok(Some(status)) => return Some(status),
+            Ok(Some(_)) => return crate::code_provider::reap_native_child(child, done, reap_guard),
             Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(20)),
             Ok(None) => {
                 crate::code_provider::kill_process_group(pgid);
-                return child.wait().ok();
+                return crate::code_provider::reap_native_child(child, done, reap_guard);
             }
             Err(_) => return None,
         }

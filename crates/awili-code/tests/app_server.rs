@@ -21,6 +21,76 @@ fn parse(lines: &[String]) -> Vec<Value> {
         .collect()
 }
 
+/// A saved planning thread must receive Auto's current policy on resume,
+/// and switching back to Ask must restore the read-only planning boundary.
+/// The same settings must survive writer-conflict forks and prewarming.
+#[test]
+fn auto_mcp_review_policy_reaches_every_thread_and_turn_path() {
+    for (autonomy, policy, reviewer, sandbox, sandbox_policy) in [
+        (
+            Autonomy::Autonomous,
+            "on-request",
+            "auto_review",
+            "danger-full-access",
+            json!({"type":"dangerFullAccess"}),
+        ),
+        (
+            Autonomy::AskFirst,
+            "never",
+            "user",
+            "read-only",
+            json!({"type":"readOnly", "networkAccess":false}),
+        ),
+    ] {
+        for resume in [None, Some("saved-planning-thread")] {
+            for warm in [false, true] {
+                for conflict in [false, true] {
+                    if conflict && resume.is_none() {
+                        continue;
+                    }
+                    let spec = spec(resume, autonomy);
+                    let mut turn = if warm {
+                        AppServerTurn::warm(spec)
+                    } else {
+                        AppServerTurn::new(spec)
+                    };
+                    turn.start();
+                    let ready = turn.on_line(r#"{"id":1,"result":{}}"#);
+                    let thread = parse(&ready.send).pop().unwrap();
+                    assert_eq!(thread["params"]["approvalPolicy"], policy);
+                    assert_eq!(thread["params"]["approvalsReviewer"], reviewer);
+                    assert_eq!(thread["params"]["sandbox"], sandbox);
+                    let id = if conflict {
+                        let fork = turn.on_line(
+                            r#"{"id":2,"error":{"message":"already has an active writer"}}"#,
+                        );
+                        let fork = parse(&fork.send).pop().unwrap();
+                        assert_eq!(fork["method"], "thread/fork");
+                        assert_eq!(fork["params"], thread["params"]);
+                        4
+                    } else {
+                        2
+                    };
+                    let opened = turn.on_line(
+                        &json!({"id":id,"result":{"thread":{"id":"opened-thread"}}}).to_string(),
+                    );
+                    let lines = if warm {
+                        assert!(opened.send.is_empty());
+                        turn.ask("Connect Chrome".into())
+                    } else {
+                        opened.send
+                    };
+                    let started = parse(&lines).pop().unwrap();
+                    assert_eq!(started["method"], "turn/start");
+                    assert_eq!(started["params"]["approvalPolicy"], policy);
+                    assert_eq!(started["params"]["approvalsReviewer"], reviewer);
+                    assert_eq!(started["params"]["sandboxPolicy"], sandbox_policy);
+                }
+            }
+        }
+    }
+}
+
 fn text(events: &[CodeEvent]) -> Vec<String> {
     events
         .iter()
@@ -70,12 +140,12 @@ fn rc2_cxs_codex_reply_streams_piece_by_piece() {
     assert_eq!(sent[0]["params"]["clientInfo"]["name"], "awili");
     assert_eq!(
         sent[2]["params"],
-        json!({"cwd":"/work/folder","sandbox":"danger-full-access","approvalPolicy":"never","model":"gpt-6.1-sol"})
+        json!({"cwd":"/work/folder","sandbox":"danger-full-access","approvalPolicy":"on-request","approvalsReviewer":"auto_review","model":"gpt-6.1-sol"})
     );
     assert_eq!(
         sent[3]["params"],
         // RC2-R615: with a summary of Codex's thinking asked for.
-        json!({"threadId":"thr-1","input":[{"type":"text","text":"Say hi"}],"summary":"auto"})
+        json!({"threadId":"thr-1","input":[{"type":"text","text":"Say hi"}],"summary":"auto","approvalPolicy":"on-request","approvalsReviewer":"auto_review","sandboxPolicy":{"type":"dangerFullAccess"}})
     );
 
     let mut pieces = Vec::new();
@@ -219,7 +289,7 @@ fn rc2_cxs_codex_resume_ask_and_unavailable() {
     assert_eq!(sent[1]["method"], "thread/resume");
     assert_eq!(
         sent[1]["params"],
-        json!({"threadId":"thr-old","cwd":"/work/folder","sandbox":"read-only","approvalPolicy":"never","model":"gpt-6.1-sol","excludeTurns":true})
+        json!({"threadId":"thr-old","cwd":"/work/folder","sandbox":"read-only","approvalPolicy":"never","approvalsReviewer":"user","model":"gpt-6.1-sol","excludeTurns":true})
     );
     let busy = turn.on_line(r#"{"error":{"code":-32600,"message":"thread thr-old already has an active writer"},"id":2}"#);
     assert!(busy.events.is_empty() && !turn.finished());
@@ -289,7 +359,9 @@ fn rc2_cxs_codex_resume_ask_and_unavailable() {
             "-c",
             "sandbox_mode=\"read-only\"",
             "-c",
-            "approval_policy=\"never\""
+            "approval_policy=\"never\"",
+            "-c",
+            "approvals_reviewer=\"user\""
         ]
     );
     assert_eq!(

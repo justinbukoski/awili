@@ -12,6 +12,9 @@ fi
 
 mkdir -p "$bindir" "$datadir/applications"
 install -m 0755 "$here/awili-app" "$bindir/awili-app"
+if [ -f "$here/awili-connectors-mcp" ]; then
+  install -m 0755 "$here/awili-connectors-mcp" "$bindir/awili-connectors-mcp"
+fi
 
 # The launcher entry points at the installed binary by absolute path. The path
 # goes in a quoted Exec argument, so escape it the way the desktop-entry spec

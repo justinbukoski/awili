@@ -119,6 +119,17 @@ pub(crate) fn pid_exists(pid: i32) -> bool {
 /// owner). Never reaps: `WNOWAIT` leaves the exit status for the owner.
 #[cfg(unix)]
 pub(crate) fn child_has_exited(pid: u32) -> bool {
+    match child_exit_observed(pid) {
+        Ok(exited) => exited,
+        Err(error) => error.raw_os_error() != Some(libc::EINTR),
+    }
+}
+
+/// Strict nonreaping observation: only `Ok(true)` proves this child has an
+/// unreaped exit and still reserves its numeric pid. ECHILD is an error, not
+/// evidence that a caller may safely signal the old process group.
+#[cfg(unix)]
+pub(crate) fn child_exit_observed(pid: u32) -> std::io::Result<bool> {
     // SAFETY: an all-zero siginfo_t is a valid out-parameter; waitid only
     // writes it.
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
@@ -133,12 +144,27 @@ pub(crate) fn child_has_exited(pid: u32) -> bool {
         )
     };
     if rc != 0 {
-        // ECHILD: not (or no longer) our child — its owner reaped it.
-        // EINTR: ask again on the next tick.
-        return std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR);
+        return Err(std::io::Error::last_os_error());
     }
     // SAFETY: waitid filled `info`; si_pid is 0 while the child still runs.
-    unsafe { info.si_pid() != 0 }
+    Ok(unsafe { info.si_pid() != 0 })
+}
+
+#[cfg(all(test, unix))]
+mod unix_exit_tests {
+    #[test]
+    fn reaped_child_does_not_prove_reserved_process_identity() {
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        let error = super::child_exit_observed(pid).unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(libc::ECHILD));
+        // The broad liveness probe deliberately keeps its older meaning.
+        assert!(super::child_has_exited(pid));
+    }
 }
 
 /// Windows has no zombie state: an exited child's pid is gone once its handle
