@@ -16185,8 +16185,12 @@ fn main() {
         // accepts geometry only when it lies (>=100px) on the primary; saved
         // on any other monitor — or on one since disconnected — falls back to
         // the centered default rather than reopening off-screen.
-        let primary: Vec<(f32, f32, f32, f32)> = cx
-            .primary_display()
+        let launch_display = cx.primary_display();
+        // Wayland deliberately has no primary display. Use an available output
+        // so saved geometry is not rejected on every Linux launch.
+        #[cfg(target_os = "linux")]
+        let launch_display = launch_display.or_else(|| cx.displays().into_iter().next());
+        let primary: Vec<(f32, f32, f32, f32)> = launch_display
             .iter()
             .map(|d| {
                 let b = d.bounds();
@@ -16200,11 +16204,18 @@ fn main() {
             .collect();
         // U3d D12: a saved size below the minimum is unusable — fall back to
         // the centered default (restorable() is the pure predicate).
+        #[cfg(target_os = "linux")]
+        let default_size = {
+            let (w, h) = winbounds::linux_launch_size(primary.first().map(|b| (b.2, b.3)));
+            size(px(w), px(h))
+        };
+        #[cfg(not(target_os = "linux"))]
+        let default_size = size(px(900.), px(680.));
         let bounds = match winbounds::load().filter(|b| {
             winbounds::visible_on_any(&primary, *b) && app_lifecycle::restorable(b.w, b.h)
         }) {
             Some(b) => Bounds::new(gpui::point(px(b.x), px(b.y)), size(px(b.w), px(b.h))),
-            None => Bounds::centered(None, size(px(900.), px(680.)), cx),
+            None => Bounds::centered(launch_display.as_ref().map(|d| d.id()), default_size, cx),
         };
         // Windows: GPUI's display bounds include the taskbar, so a default or
         // restored window could sit under it. Fit the client bounds (plus the

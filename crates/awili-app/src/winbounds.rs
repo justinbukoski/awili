@@ -19,6 +19,18 @@ pub struct SavedBounds {
 pub const MIN_W: f32 = 480.0;
 pub const MIN_H: f32 = 360.0;
 
+/// A roomy Linux first-run window, capped to leave space for desktop panels.
+#[cfg(target_os = "linux")]
+pub fn linux_launch_size(display: Option<(f32, f32)>) -> (f32, f32) {
+    match display {
+        Some((w, h)) => (
+            1440.0_f32.min((w - 80.0).max(1.0)),
+            960.0_f32.min((h - 120.0).max(1.0)),
+        ),
+        None => (1440.0, 960.0),
+    }
+}
+
 /// Parse "x y w h". Any missing/garbage/non-finite field, or an implausible
 /// size, is `None` — the caller uses the default centered bounds.
 pub fn parse(raw: &str) -> Option<SavedBounds> {
@@ -147,6 +159,14 @@ pub fn primary_work_area() -> Option<(f32, f32, f32, f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_launch_size_fits_laptop_and_large_displays() {
+        assert_eq!(linux_launch_size(None), (1440., 960.));
+        assert_eq!(linux_launch_size(Some((3072., 1728.))), (1440., 960.));
+        assert_eq!(linux_launch_size(Some((1366., 768.))), (1286., 648.));
+    }
 
     #[test]
     fn roundtrip_and_garbage() {
