@@ -179,9 +179,7 @@ pub(crate) fn resolve(
         request.key.is_some(),
     );
     let expire = prompt.expiration();
-    if tx
-        .send_blocking(ProviderEvent::HostApproval(prompt))
-        .is_err()
+    if crate::code_provider::send_native_event(tx, ProviderEvent::HostApproval(prompt)).is_err()
     {
         expire();
         return request.response(ApprovalChoice::Deny);

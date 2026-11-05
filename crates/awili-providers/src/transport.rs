@@ -39,10 +39,11 @@ pub(crate) fn shared_client() -> &'static reqwest::blocking::Client {
     static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::blocking::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(READ_TIMEOUT)
             .build()
-            .unwrap_or_else(|_| reqwest::blocking::Client::new())
+            .expect("provider HTTP client configuration must be valid")
     })
 }
 
@@ -128,9 +129,15 @@ fn pump_body<R: Read>(
 ) {
     let mut buf = [0u8; 8192];
     loop {
+        if tx.is_closed() {
+            return;
+        }
         match reader.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
+                if tx.is_closed() {
+                    return;
+                }
                 for ev in decoder.feed(&buf[..n]) {
                     if tx.send_blocking(ev).is_err() {
                         return; // consumer gone
@@ -189,6 +196,41 @@ mod tests {
         fn finish(&mut self) -> Vec<ProviderEvent> {
             Vec::new()
         }
+    }
+
+    #[test]
+    fn provider_client_does_not_follow_credential_redirects() {
+        use std::io::{Read as _, Write as _};
+        let origin = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let destination = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        destination.set_nonblocking(true).unwrap();
+        let location = format!("http://{}/other", destination.local_addr().unwrap());
+        let url = format!("http://{}/", origin.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = origin.accept().unwrap();
+            let mut req = [0u8; 4096]; let _ = socket.read(&mut req);
+            write!(socket, "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        let response = shared_client().get(url).header("x-api-key", "synthetic-token").send().unwrap();
+        assert_eq!(response.status().as_u16(), 302);
+        server.join().unwrap();
+        assert_eq!(destination.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+    }
+
+    #[test]
+    fn keepalive_after_consumer_drop_retires_without_another_read() {
+        struct Reader(Option<async_channel::Receiver<ProviderEvent>>);
+        impl Read for Reader {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                assert!(self.0.is_some(), "read after receiver closed");
+                drop(self.0.take());
+                buf[..3].copy_from_slice(b":\n\n");
+                Ok(3)
+            }
+        }
+        let (tx, rx) = async_channel::unbounded();
+        pump_body(Reader(Some(rx)), &mut NoopDecoder, &tx);
+        assert!(tx.is_closed());
     }
 
     /// H2: a stalled stream whose consumer has dropped must retire the worker

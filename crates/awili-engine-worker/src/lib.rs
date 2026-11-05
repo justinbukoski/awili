@@ -1505,6 +1505,7 @@ impl EngineWorker for AwiliEngineWorker {
     fn run(self: Box<Self>, ctx: WorkerContext) {
         let this = *self;
         let mut transport = this.transport;
+        transport.set_cancel_flag(ctx.cancel.clone());
         let cfg = this.cfg;
         let authority = this.authority;
         let mcp = this.mcp;

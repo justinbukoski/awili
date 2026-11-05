@@ -14,6 +14,7 @@ fn snapshot_write_cycle_rejects_old_acknowledgements(cx: &mut gpui::TestAppConte
         app.persist = Some(crate::Persistence {
             tx,
             failed: Default::default(),
+            recovery: Default::default(),
         });
         for raw in ["A", "B", "A"] {
             app.queue_workshop_save(raw.into(), None, cx);
@@ -64,6 +65,7 @@ fn snapshot_recovers_only_after_worker_ack_and_keeps_raw_backup(cx: &mut gpui::T
         app.persist = Some(crate::Persistence {
             tx,
             failed: Default::default(),
+            recovery: Default::default(),
         });
         app.recover_workshop_tabs(cx);
         assert_eq!(
@@ -174,6 +176,7 @@ fn snapshot_read_failure_blocks_automatic_writes(cx: &mut gpui::TestAppContext) 
         app.persist = Some(crate::Persistence {
             tx,
             failed: Default::default(),
+            recovery: Default::default(),
         });
         assert!(!app.load_workshop_tabs(&Err("database read refused".into()), &HashMap::new()));
         app.sync_workshop_tabs();
@@ -332,6 +335,7 @@ fn snapshot_production_dedup_restores_a_after_queued_b_and_retries_failure(
         app.persist = Some(crate::Persistence {
             tx,
             failed: Default::default(),
+            recovery: Default::default(),
         });
         let a = app.create_conversation(ConvKind::Chat);
         let b = app.create_conversation(ConvKind::Chat);

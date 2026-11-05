@@ -359,6 +359,85 @@ fn checking<T>(f: impl FnOnce(&mut HashSet<String>) -> T) -> T {
 /// Run `bin args` and wait at most `deadline` for it to finish: its exit
 /// success and what it printed, or `None` when it could not start or did
 /// not finish in time (then it is stopped).
+#[cfg(unix)]
+fn ask_cli(bin: &str, args: &[&str], deadline: Duration) -> Option<(bool, Vec<u8>)> {
+    use crate::proc_compat::OwnProcessGroup;
+    use std::io::{ErrorKind, Read};
+    use std::os::fd::AsRawFd;
+    const LIMIT: usize = 64 * 1024;
+    let started = Instant::now();
+    let program = crate::agent_bin::resolve_program(std::ffi::OsStr::new(bin)).ok()?;
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .own_process_group();
+    let mut child = cmd.spawn().ok()?;
+    let pid = child.id();
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let mut stderr = child.stderr.take().expect("piped stderr");
+    for fd in [stdout.as_raw_fd(), stderr.as_raw_fd()] {
+        // The descriptors are owned by this function and remain open here.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            crate::code_provider::kill_process_group(pid as i32);
+            let _ = child.wait();
+            return None;
+        }
+    }
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let mut failed = false;
+    loop {
+        for (pipe, buffer) in [
+            (&mut stdout as &mut dyn Read, &mut out),
+            (&mut stderr as &mut dyn Read, &mut err),
+        ] {
+            let mut chunk = [0u8; 4096];
+            loop {
+                match pipe.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) if buffer.len() + n <= LIMIT => buffer.extend_from_slice(&chunk[..n]),
+                    Ok(_) => {
+                        failed = true;
+                        break;
+                    }
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+                    Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                    Err(_) => {
+                        failed = true;
+                        break;
+                    }
+                }
+            }
+        }
+        let exited = match crate::proc_compat::child_exit_observed(pid) {
+            Ok(exited) => exited,
+            Err(e) if e.kind() == ErrorKind::Interrupted => false,
+            Err(_) => {
+                return None;
+            }
+        };
+        if exited || failed || started.elapsed() >= deadline {
+            // Before wait(), the child still reserves the group leader's id.
+            crate::code_provider::kill_process_group(pid as i32);
+            let status = child.wait().ok()?;
+            if failed || !exited || started.elapsed() >= deadline {
+                return None;
+            }
+            let said = if out.iter().all(u8::is_ascii_whitespace) {
+                err
+            } else {
+                out
+            };
+            return Some((status.success(), said));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(not(unix))]
 fn ask_cli(bin: &str, args: &[&str], deadline: Duration) -> Option<(bool, Vec<u8>)> {
     use std::io::Read;
     let started = Instant::now();

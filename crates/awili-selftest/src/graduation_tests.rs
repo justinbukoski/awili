@@ -348,3 +348,19 @@ fn s7d_read_redacts_lines_written_before_the_fix() {
     let notes = read[0].notes.as_deref().unwrap_or("");
     assert!(!notes.contains("hunter2"), "{notes}");
 }
+
+#[test]
+fn concurrent_ledger_writers_keep_every_record_readable() {
+    let path = std::sync::Arc::new(temp_ledger("concurrent"));
+    let mut workers = Vec::new();
+    for _ in 0..4 {
+        let path = path.clone();
+        workers.push(std::thread::spawn(move || {
+            for _ in 0..20 {
+                Ledger::append(&path, &success("2026-09-23T10:00:00Z", 1000)).unwrap();
+            }
+        }));
+    }
+    for worker in workers { worker.join().unwrap(); }
+    assert_eq!(Ledger::read(&path).unwrap().len(), 80);
+}

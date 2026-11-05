@@ -368,7 +368,7 @@ fn write_result(d: Diagnostic, rows: Option<Vec<(String, String)>>) -> (String, 
         "app_terminal_success":d.success, "tool_attempt_failed":d.tool_attempt_failed, "cancelled_or_timed_out":d.cancelled,
         "nonce_line_matched":answer.lines().any(|line| line.trim() == d.fixture.nonce),
         "persisted_pair_verified":rows.as_deref() == Some(&[("user".to_string(), d.request.clone()), ("assistant".to_string(), answer.to_string())][..]), "provider_termination_observed":d.terminated.load(Ordering::Acquire), "provider_done_observed":d.done, "timed_out":d.timed_out,
-        "challenge_path":d.fixture.path, "cleanup":"only unchanged owned challenge eligible after PASS"
+        "challenge_path":d.fixture.path, "cleanup":"retained to protect concurrent workspace changes"
     });
     let dir = dirs::data_local_dir().map(|p| p.join("awili/selftest"));
     let path = dir.and_then(|dir| {

@@ -1210,6 +1210,7 @@ fn workshop_geometry_notice_actions_keyboard_reveal(cx: &mut gpui::TestAppContex
                 app.persist = Some(crate::Persistence {
                     tx,
                     failed: Default::default(),
+            recovery: Default::default(),
                 })
             });
         }
@@ -1390,6 +1391,7 @@ fn workshop_conversations_collapse_and_reopen_without_touching_thread_or_run(
         app.persist = Some(crate::Persistence {
             tx,
             failed: Default::default(),
+            recovery: Default::default(),
         })
     });
     let (abort_tx, abort_rx) = std::sync::mpsc::channel();
@@ -1498,6 +1500,7 @@ fn workshop_conversations_saved_collapse_is_restored_on_launch(cx: &mut gpui::Te
         app.persist = Some(crate::Persistence {
             tx,
             failed: Default::default(),
+            recovery: Default::default(),
         });
         app.fleet_pack = None;
         app.memory.enabled = false;

@@ -243,6 +243,10 @@ pub(crate) enum PersistCmd {
     /// the durable request identity is queued BEFORE any Running state is
     /// shown, and a replay of the same request id updates the row in place —
     /// never a second row (the persist layer enforces both).
+    CommitBuildJob {
+        row: awili_persist::build_jobs::BuildJobRow,
+        reply: async_channel::Sender<Result<(), String>>,
+    },
     UpsertBuildJob {
         turn_id: String,
         request_id: String,
@@ -270,6 +274,13 @@ pub(crate) struct Persistence {
     /// silently lost; this flag plus a one-time log surface that instead of
     /// swallowing every `send` error with `let _ =`.
     pub(crate) failed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) recovery: std::sync::Arc<std::sync::Mutex<Recovery>>,
+}
+
+#[derive(Default)]
+pub(crate) struct Recovery {
+    pub(crate) problem: Option<String>,
+    pub(crate) messages: Vec<(String, &'static str, String, i64, String)>,
 }
 
 /// Why the app database could not be opened, in words for the person, when it
@@ -281,9 +292,7 @@ static STORAGE_PROBLEM: std::sync::Mutex<Option<String>> = std::sync::Mutex::new
 /// (stderr only): the banner is a Windows addition, so nothing is recorded
 /// elsewhere.
 pub(crate) fn set_storage_problem(message: String) {
-    if cfg!(windows) {
-        *STORAGE_PROBLEM.lock().unwrap_or_else(|e| e.into_inner()) = Some(message);
-    }
+    *STORAGE_PROBLEM.lock().unwrap_or_else(|e| e.into_inner()) = Some(message);
 }
 
 /// The recorded reason persistence is unavailable, if any.
@@ -610,6 +619,8 @@ impl Persistence {
     /// it to prove a failed write is logged-and-survived, never a panic.
     pub(crate) fn spawn_worker(mut store: Store) -> (Persistence, std::thread::JoinHandle<()>) {
         let (tx, rx) = std::sync::mpsc::channel::<PersistCmd>();
+        let recovery = std::sync::Arc::new(std::sync::Mutex::new(Recovery::default()));
+        let worker_recovery = recovery.clone();
         let worker = std::thread::spawn(move || {
             // The Store is owned here for the worker's lifetime; every write is
             // serialized through this single loop.
@@ -647,9 +658,26 @@ impl Persistence {
                         text,
                         ts,
                         kind,
-                    } => store
-                        .append_message_kind(&conv, role, &text, ts, kind.as_persist_str())
-                        .map(|_| ()),
+                    } => {
+                        let result = store
+                            .append_message_kind(&conv, role, &text, ts, kind.as_persist_str())
+                            .map(|_| ());
+                        if let Err(error) = &result {
+                            worker_recovery
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .messages
+                                .push((
+                                    conv.clone(),
+                                    role,
+                                    text.clone(),
+                                    ts,
+                                    kind.as_persist_str().to_string(),
+                                ));
+                            worker_recovery.lock().unwrap_or_else(|e| e.into_inner()).problem = Some(format!("A message could not be saved ({error}). Copy unsaved messages before closing Awili."));
+                        }
+                        result
+                    }
                     PersistCmd::Truncate { conv, keep } => {
                         store.truncate_messages(&conv, keep).map(|_| ())
                     }
@@ -822,6 +850,11 @@ impl Persistence {
                         // write failure; the reply already carried the miss.
                         result.map(|_| ())
                     }
+                    PersistCmd::CommitBuildJob { row, reply } => {
+                        let result = store.upsert_build_job(&row).map_err(|e| e.to_string());
+                        let _ = reply.send_blocking(result);
+                        Ok(())
+                    }
                     PersistCmd::UpsertBuildJob {
                         turn_id,
                         request_id,
@@ -851,9 +884,40 @@ impl Persistence {
             Persistence {
                 tx,
                 failed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                recovery,
             },
             worker,
         )
+    }
+
+    pub(crate) fn storage_problem(&self) -> Option<String> {
+        self.recovery
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .problem
+            .clone()
+    }
+
+    pub(crate) fn has_unsaved_messages(&self) -> bool {
+        !self
+            .recovery
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .messages
+            .is_empty()
+    }
+
+    pub(crate) fn unsaved_messages_recovery(&self) -> String {
+        self.recovery
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .messages
+            .iter()
+            .map(|(conv, role, text, ts, kind)| {
+                format!("Conversation: {conv}\nRole: {role}\nTime: {ts}\nKind: {kind}\n\n{text}\n")
+            })
+            .collect::<Vec<_>>()
+            .join("\n---\n\n")
     }
 
     /// Queue a message append (non-blocking; the worker commits it).
@@ -897,10 +961,27 @@ impl Persistence {
     /// it with `let _ =` (M7). Still infallible for callers — a dead worker must
     /// never panic the UI thread.
     fn dispatch(&self, cmd: PersistCmd) {
-        if self.tx.send(cmd).is_err()
-            && !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst)
-        {
-            eprintln!("awili: persistence worker is gone — queued writes are no longer durable");
+        if let Err(error) = self.tx.send(cmd) {
+            if let PersistCmd::Append {
+                conv,
+                role,
+                text,
+                ts,
+                kind,
+            } = error.0
+            {
+                self.recovery
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .messages
+                    .push((conv, role, text, ts, kind.as_persist_str().to_string()));
+            }
+            if !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                self.recovery.lock().unwrap_or_else(|e| e.into_inner()).problem = Some("Storage worker stopped. Your conversation is only in memory; copy unsaved messages before closing Awili.".into());
+                eprintln!(
+                    "awili: persistence worker is gone — queued writes are no longer durable"
+                );
+            }
         }
     }
 }
@@ -1387,7 +1468,83 @@ mod storage_problem_tests {
         set_storage_problem(
             "Awili needs an NTFS profile folder to keep your keys private".to_string(),
         );
-        assert_eq!(storage_problem().is_some(), cfg!(windows));
+        assert!(storage_problem().is_some());
         *STORAGE_PROBLEM.lock().unwrap() = before;
+    }
+}
+
+#[cfg(test)]
+mod unsaved_recovery_tests {
+    use super::*;
+
+    #[test]
+    fn rejected_sql_append_is_retained_for_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("failure.db")).unwrap();
+        let (p, worker) = Persistence::spawn_worker(store);
+        p.append(
+            "missing-conversation-recovery-test",
+            "user",
+            "recover-this-message".into(),
+            42,
+        );
+        let (reply, ack) = async_channel::bounded(1);
+        p.send(PersistCmd::ReadState {
+            key: "barrier".into(),
+            reply,
+        });
+        ack.recv_blocking().unwrap();
+        let recovery = p.unsaved_messages_recovery();
+        assert!(recovery.contains("missing-conversation-recovery-test"));
+        assert!(recovery.contains("recover-this-message"));
+        assert!(p.storage_problem().is_some());
+        drop(p);
+        worker.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod build_commit_regression {
+    use super::*;
+    #[test]
+    fn commit_ack_reports_durable_row_and_real_sql_rejection() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("build.db");
+        let (p, worker) = Persistence::spawn_worker(Store::open(&path).unwrap());
+        let row = awili_persist::build_jobs::BuildJobRow {
+            turn_id: "turn".into(),
+            request_id: "request".into(),
+            target_id: "target".into(),
+            revision: 0,
+            state: "submitting".into(),
+            result_sha: None,
+            failure: None,
+            updated_at: 1,
+        };
+        let (reply, ack) = async_channel::bounded(1);
+        p.send(PersistCmd::CommitBuildJob {
+            row: row.clone(),
+            reply,
+        });
+        assert!(ack.recv_blocking().unwrap().is_ok());
+        assert_eq!(
+            Store::open(&path)
+                .unwrap()
+                .build_job_for_turn("turn")
+                .unwrap(),
+            Some(row.clone())
+        );
+        let (reply, ack) = async_channel::bounded(1);
+        let mut bad = row.clone();
+        bad.turn_id = "other-turn".into(); // duplicate request ID violates the unique index
+        p.send(PersistCmd::CommitBuildJob { row: bad, reply });
+        assert!(ack.recv_blocking().unwrap().is_err());
+        assert!(Store::open(&path)
+            .unwrap()
+            .build_job_for_turn("other-turn")
+            .unwrap()
+            .is_none());
+        drop(p);
+        worker.join().unwrap();
     }
 }

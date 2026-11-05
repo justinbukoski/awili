@@ -42,18 +42,14 @@ impl SettingsState {
         // `secret:` reference. Emptying the field clears it as before.
         // Clearing a key that was a reference also removes its stored entry,
         // once the change has landed.
-        let mut stale_account: Option<String> = None;
+        // A fresh account keeps the previous reference valid for Undo and
+        // avoids changing the active credential before config commit.
         let edit = match (&edit, crate::secret_store::catalog_secret_account(id)) {
             (Edit::Text(s), Some(account)) if item.control == Control::Secret => {
-                if s.is_empty() {
-                    stale_account = crate::secret_store::catalog_secret_current(&doc.config(), id)
-                        .and_then(|v| {
-                            awili_config::secrets::parse_secret_ref(&v).map(str::to_string)
-                        });
-                }
+                let account = format!("{account}:{}", uuid::Uuid::new_v4());
                 match awili_config::secrets::store_typed_key(
                     crate::secret_store::store(),
-                    account,
+                    &account,
                     s,
                 ) {
                     Ok(written) => Edit::Text(written),
@@ -91,13 +87,7 @@ impl SettingsState {
             self.error = Some(format!("{} was not saved: {e}", item.label));
             return false;
         }
-        let landed = self.land_item(item, next.text(), "Saved");
-        if landed {
-            if let Some(account) = stale_account {
-                crate::secret_store::delete_accounts(&[account], crate::secret_store::store());
-            }
-        }
-        landed
+        self.land_item(item, next.text(), "Saved")
     }
 
     /// Put one item back to its built-in default: the key leaves the file.

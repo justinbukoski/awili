@@ -50,6 +50,7 @@ pub(crate) fn spawn_tracked(cmd: &mut Command) -> std::io::Result<std::process::
 /// NEVER touched (no `taskkill` by pid, which could hit an unrelated process
 /// that reused the number): that is an error. A failure is returned for the
 /// caller to report.
+#[cfg(any(windows, test))]
 pub(crate) fn kill_pid(pid: u32) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -79,6 +80,7 @@ pub(crate) fn kill_pid(pid: u32) -> std::io::Result<()> {
 }
 
 /// Report a failed [`kill_pid`] where there is no caller to return it to.
+#[cfg(any(windows, test))]
 pub(crate) fn kill_pid_reporting(pid: u32) {
     match kill_pid(pid) {
         Ok(()) => {}

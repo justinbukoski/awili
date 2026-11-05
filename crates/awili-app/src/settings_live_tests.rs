@@ -265,21 +265,17 @@ fn rc2ux_settings_and_the_rail_say_things_plainly() {
     }
 }
 
-/// Clearing a stored key in Settings removes its secret-store entry too.
+/// Clearing a key keeps its old account available to Undo.
 #[test]
-fn sxb_clearing_a_stored_key_removes_the_stored_entry() {
+fn clearing_a_stored_key_can_be_undone() {
     let (_d, mut s) = opened(HOME);
-    assert!(
-        s.apply_item("memory.token", Edit::Text("tok-stale".into())),
-        "{:?}",
-        s.error
-    );
+    assert!(s.apply_item("memory.token", Edit::Text("tok-stale".into())));
+    let reference = s.doc.as_ref().unwrap().config().memory.token;
+    let account = awili_config::secrets::parse_secret_ref(&reference).unwrap();
     let store = crate::secret_store::store();
-    assert_eq!(store.get("memory").unwrap().as_deref(), Some("tok-stale"));
-    assert!(
-        s.apply_item("memory.token", Edit::Text(String::new())),
-        "{:?}",
-        s.error
-    );
-    assert_eq!(store.get("memory").unwrap(), None);
+    assert_eq!(store.get(account).unwrap().as_deref(), Some("tok-stale"));
+    assert!(s.apply_item("memory.token", Edit::Text(String::new())));
+    assert!(s.undo_last());
+    assert_eq!(s.doc.as_ref().unwrap().config().memory.token, reference);
+    assert_eq!(store.get(account).unwrap().as_deref(), Some("tok-stale"));
 }

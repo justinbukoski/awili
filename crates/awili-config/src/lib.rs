@@ -2002,7 +2002,11 @@ impl Config {
     /// injected directive to be priority ≥ 90, so a lower floor is a config error
     /// surfaced at load rather than silently honoured (review slice 2, blocker 2).
     pub fn parse(text: &str) -> Result<Config, ConfigError> {
-        let config: Config = toml::from_str(text).map_err(ConfigError::Toml)?;
+        let config: Config = toml::from_str(text).map_err(|e: toml::de::Error| {
+            let kind = if e.message().starts_with("missing field `id`") { "missing field `id`" } else if e.message().starts_with("unknown field") { "unknown field" } else { "invalid TOML or field type" };
+            let location = e.span().map(|span| { let prefix = &text[..span.start.min(text.len())]; format!(" at line {}, column {}", prefix.bytes().filter(|b| *b == b'\n').count() + 1, prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1) }).unwrap_or_default();
+            ConfigError::Toml(format!("{kind}{location}"))
+        })?;
         if config.memory.min_priority < MIN_PRIORITY_FLOOR {
             return Err(ConfigError::MinPriorityTooLow(config.memory.min_priority));
         }
@@ -2252,7 +2256,7 @@ fn check_build_target_field(
 #[derive(Debug)]
 pub enum ConfigError {
     Io(std::io::Error),
-    Toml(toml::de::Error),
+    Toml(String),
     /// `memory.min_priority` was below [`MIN_PRIORITY_FLOOR`].
     MinPriorityTooLow(i64),
     /// Text that is not even well-formed TOML (from the editing layer, which
@@ -2283,7 +2287,7 @@ impl std::fmt::Display for ConfigError {
                 f,
                 "memory.min_priority = {n} is below the required floor of {MIN_PRIORITY_FLOOR}"
             ),
-            ConfigError::Syntax(e) => write!(f, "TOML syntax: {e}"),
+            ConfigError::Syntax(_) => write!(f, "TOML syntax: invalid input"),
             ConfigError::InstallTrustNotReserved(name) => write!(
                 f,
                 "mcp server {name:?}: trust = \"install\" is reserved for \
@@ -2306,6 +2310,14 @@ impl std::error::Error for ConfigError {}
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parser_diagnostics_hide_credentials() {
+        let input = "[memory]\nmin_priority = \"synthetic-private-token\"\n";
+        let err = super::Config::parse(input).unwrap_err();
+        assert!(!format!("{err} {err:?}").contains("synthetic-private-token"));
+        let err = match super::ConfigDoc::parse("api_key = \"synthetic-private-token\n") { Err(e) => e, Ok(_) => panic!("invalid input accepted") };
+        assert!(!format!("{err} {err:?}").contains("synthetic-private-token"));
+    }
     use super::*;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
@@ -2426,10 +2438,7 @@ mod tests {
         ] {
             let err = Config::parse(text).expect_err("a typo must not load");
             let shown = err.to_string();
-            assert!(
-                shown.contains("enabeld") || shown.contains("ssh_prot"),
-                "the error names the key: {shown}"
-            );
+            assert!(shown.contains("unknown field"), "{shown}");
         }
         let ok = Config::parse("[outline]\nenabled = true\n[gitea]\nssh_port = 22\n").unwrap();
         assert!(ok.outline.enabled);

@@ -1592,7 +1592,9 @@ impl crate::AwiliApp {
                             this.update(cx, |app, _| app.council_on_changed(&key)).ok();
                         }
                     }
-                    ProviderEvent::HostApproval(request) => { request.answer(awili_providers::ApprovalChoice::Deny); }
+                    ProviderEvent::HostApproval(request) => {
+                        request.answer(awili_providers::ApprovalChoice::Deny);
+                    }
                     ProviderEvent::ToolAttemptFailed => {}
                 }
             }
@@ -2178,14 +2180,13 @@ impl crate::AwiliApp {
         if let Some(p) = self.councils.get_mut(conv) {
             p.note = p.queued.front().map(|t| queued_note(t));
         }
-        self.council_save_queue(conv);
         if let Err(reason) = self.council_send_message(conv, next.clone(), cx) {
             if let Some(p) = self.councils.get_mut(conv) {
+                p.queued.push_front(next);
                 p.note = Some(reason);
             }
-            if self.sidebar.active_id() == conv {
-                self.restore_draft(&next, cx);
-            }
+        } else {
+            self.council_save_queue(conv);
         }
         cx.notify();
     }
@@ -3419,9 +3420,15 @@ mod tests {
         assert_eq!(cwd, home, "Codex works in the owner's home folder");
         let (glm, cwd) = launched(dir.path(), "zcode");
         assert!(has_pair(&glm, "--mode", "yolo"), "{glm:?}");
-        assert!(cwd.ends_with(&format!("{}/council", awili_config::APP_DIR_NAME)), "{cwd} vs {council}");
+        assert!(
+            cwd.ends_with(&format!("{}/council", awili_config::APP_DIR_NAME)),
+            "{cwd} vs {council}"
+        );
         let (_, cwd) = launched(dir.path(), "dsh");
-        assert!(cwd.ends_with(&format!("{}/council", awili_config::APP_DIR_NAME)), "{cwd} vs {council}");
+        assert!(
+            cwd.ends_with(&format!("{}/council", awili_config::APP_DIR_NAME)),
+            "{cwd} vs {council}"
+        );
         // "Make the changes": one full-access follow-up.
         s.approved = true;
         drain(member_provider("agent:claude:sonnet", &s), "Go on.");

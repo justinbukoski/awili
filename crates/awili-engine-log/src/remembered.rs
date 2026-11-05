@@ -155,8 +155,10 @@ pub fn forget_session(session_id: &str) {
 
 /// Live Session grants that have not been revoked.
 pub fn session_grants() -> Vec<RememberedGrant> {
+    // Keep the same order as forget_session when both locks are held.
+    let grants = lock(&SESSION_GRANTS);
     let revoked = lock(&SESSION_REVOKED);
-    lock(&SESSION_GRANTS)
+    grants
         .iter()
         .filter(|g| !revoked.contains(&g.approval_ref))
         .cloned()

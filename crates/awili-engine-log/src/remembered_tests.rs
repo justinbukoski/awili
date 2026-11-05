@@ -238,3 +238,23 @@ fn s6_forget_session_clears_revoke_notes_that_never_registered() {
     crate::remembered::forget_session("s6-never-registered");
     assert!(!is_session_revoked(r));
 }
+
+#[test]
+fn session_listing_and_cleanup_complete_concurrently() {
+    let gate = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    for list in [true, false] {
+        let gate = gate.clone();
+        let done_tx = done_tx.clone();
+        std::thread::spawn(move || {
+            gate.wait();
+            for _ in 0..1000 {
+                if list { let _ = session_grants(); }
+                else { crate::remembered::forget_session("concurrent-test"); }
+            }
+            done_tx.send(()).unwrap();
+        });
+    }
+    gate.wait();
+    for _ in 0..2 { done_rx.recv_timeout(std::time::Duration::from_secs(5)).expect("session operation deadlocked"); }
+}

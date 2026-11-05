@@ -216,7 +216,7 @@ impl ConfigDoc {
     pub fn parse(text: &str) -> Result<ConfigDoc, ConfigError> {
         let doc: DocumentMut = text
             .parse()
-            .map_err(|e: toml_edit::TomlError| ConfigError::Syntax(e.to_string()))?;
+            .map_err(|_: toml_edit::TomlError| ConfigError::Syntax("invalid TOML input".into()))?;
         Config::parse(text)?;
         Ok(ConfigDoc { doc })
     }
@@ -245,7 +245,7 @@ impl ConfigDoc {
     /// place, so their bytes are never reserialized.
     pub fn networkless() -> Result<ConfigDoc, ConfigError> {
         let text = toml::to_string(&Config::networkless())
-            .map_err(|e| ConfigError::Syntax(e.to_string()))?;
+            .map_err(|_| ConfigError::Syntax("invalid TOML input".into()))?;
         Self::parse(&text)
     }
 
@@ -433,7 +433,7 @@ impl ConfigDoc {
         let value: Value = raw
             .trim()
             .parse()
-            .map_err(|e: toml_edit::TomlError| ConfigError::Syntax(e.to_string()))?;
+            .map_err(|_: toml_edit::TomlError| ConfigError::Syntax("invalid TOML input".into()))?;
         self.set(target, value)
     }
 

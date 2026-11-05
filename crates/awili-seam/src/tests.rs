@@ -2441,6 +2441,25 @@ fn rc1f5_a_name_collision_is_disambiguated_deterministically() {
     assert_all_clean(&r.records, 1);
 }
 
+#[test]
+fn builtin_registry_alias_executes_when_mcp_has_same_name() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("notes.txt"), b"collision fixture").unwrap();
+    let extra = def_of("mcp:other", "fs.read");
+    let bodies = vec![
+        sse_tool_round(&[("call_r", "fs_fs_read", r#"{"path":"notes.txt"}"#)]),
+        sse_text_final("ok"),
+    ];
+    let mut approver = no_dialog_expected();
+    let r = run_with_extras(&root, bodies, &mut approver, std::slice::from_ref(&extra));
+    let report = r.result.expect("turn completes");
+    let names = rc1f5_wire_names_in(&report.requests[0]);
+    assert!(names.contains(&"fs_fs_read".to_string()), "{names:?}");
+    let continuation: serde_json::Value = serde_json::from_str(&report.requests[1]).unwrap();
+    assert!(continuation["messages"][2]["content"].as_str().unwrap().contains("collision fixture"));
+    assert_all_clean(&r.records, 1);
+}
+
 /// RC1-F4b-FIX1: the HTTP transport posts to exactly `chat_completions_url`
 /// (the string the app classifies the engine's locality from).
 #[test]
@@ -6397,4 +6416,20 @@ fn configured_output_reservation_prevents_an_overfull_request_from_being_sent() 
     assert!(matches!(result, Err(SeamError::Context(_))));
     assert_eq!(sent, 0);
     assert_eq!(input_budget_tokens(projection_window_tokens(10000, 9487)), 1);
+}
+
+#[test]
+fn bounded_stream_observes_cancel_between_unterminated_chunks() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    struct Reader<'a>(&'a AtomicBool);
+    impl std::io::Read for Reader<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.0.store(true, Ordering::SeqCst);
+            buf[0] = b'x';
+            Ok(1)
+        }
+    }
+    let cancelled = AtomicBool::new(false);
+    let result = super::bounded_stream_body(Reader(&cancelled), true, &mut |_| true, || cancelled.load(Ordering::SeqCst));
+    assert!(matches!(result, Err(super::SeamError::Cancelled(super::StopCause::Cancelled))));
 }

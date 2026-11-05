@@ -352,7 +352,7 @@ impl FeedMirror {
                           MAX(CASE severity WHEN 'critical' THEN 2 ELSE 1 END) AS worst
                    FROM events
                    WHERE acked_ts IS NULL AND severity IN ('attention', 'critical')
-                   GROUP BY COALESCE(dedup_key, 'seq:' || seq)) g
+                   GROUP BY CASE WHEN dedup_key IS NULL THEN 'seq:' || seq ELSE 'k:' || dedup_key END) g
                ON e.seq = g.latest_seq
              ORDER BY e.created_ts DESC, e.seq DESC",
         )?;
@@ -765,6 +765,19 @@ mod tests {
         assert_eq!(mirror.last_sync_ts(), None);
         assert_eq!(mirror.unacked_count().unwrap(), 0);
         assert!(mirror.needs_you_local().unwrap().is_empty());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn keyless_event_and_same_text_key_remain_distinct() {
+        let (mirror, path) = temp_mirror();
+        mirror.upsert(&event(1, Severity::Attention, None)).unwrap();
+        mirror.upsert(&event(2, Severity::Attention, Some("seq:1"))).unwrap();
+        let groups = mirror.needs_you_local().unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].event_ids, vec!["e2"]);
+        assert_eq!(groups[1].event_ids, vec!["e1"]);
+        drop(mirror);
         let _ = std::fs::remove_file(path);
     }
 

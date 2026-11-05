@@ -16,7 +16,7 @@
 //! the cancel-token semantics, the HTTP request builder, and that [`speak_all`]
 //! stops feeding chunks the instant it is cancelled.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -347,9 +347,16 @@ impl HttpTts {
                 self.endpoint
             )));
         }
-        let bytes = resp.bytes().map_err(|e| TtsError::Http(e.to_string()))?;
-        Ok(bytes.to_vec())
+        const MAX_AUDIO_BYTES: u64 = 32 * 1024 * 1024;
+        read_audio_bounded(resp, MAX_AUDIO_BYTES)
     }
+}
+
+fn read_audio_bounded(reader: impl Read, limit: u64) -> Result<Vec<u8>, TtsError> {
+    let mut bytes = Vec::new();
+    reader.take(limit + 1).read_to_end(&mut bytes).map_err(|e| TtsError::Http(e.to_string()))?;
+    if bytes.len() as u64 > limit { return Err(TtsError::Http("audio response exceeds size limit".into())); }
+    Ok(bytes)
 }
 
 impl TtsBackend for HttpTts {
@@ -511,6 +518,11 @@ fn build_tts_request(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn audio_response_size_boundary_is_enforced_while_reading() {
+        assert_eq!(super::read_audio_bounded(&b"1234"[..], 4).unwrap(), b"1234");
+        assert!(super::read_audio_bounded(&b"12345"[..], 4).unwrap_err().to_string().contains("size limit"));
+    }
     use super::*;
     use std::sync::Mutex;
 

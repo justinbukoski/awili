@@ -938,7 +938,7 @@ pub(crate) struct Reading {
 /// reachability, then (when it answers) `GET /api/v1/health` to learn
 /// whether it is Lemonade and what is resident. Read-only throughout.
 pub(crate) fn read_engine(base_url: &str, api_key: Option<&str>, timeout: Duration) -> Reading {
-    let reach = match crate::local_model_health::probe_model_endpoint(base_url, timeout) {
+    let reach = match crate::local_model_health::probe_model_endpoint(base_url, api_key, timeout) {
         Ok(()) => Reach::Up,
         Err(detail) => Reach::Down(detail),
     };
@@ -1171,9 +1171,9 @@ fn percent(v: f64) -> Vec<Seg> {
 /// Derive the strip from the facts.
 pub(crate) fn derive(i: &Inputs) -> View {
     let (model, host_name, addr, local) = match &i.place {
-        Where::Local { host, addr, model, .. } => {
-            (model.clone(), host.clone(), Some(addr.clone()), true)
-        }
+        Where::Local {
+            host, addr, model, ..
+        } => (model.clone(), host.clone(), Some(addr.clone()), true),
         Where::Cloud { model, .. } => (model.clone(), String::new(), None, false),
     };
 

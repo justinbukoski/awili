@@ -2535,9 +2535,7 @@ impl AwiliApp {
                 WorkExecutor::InApp
                 | WorkExecutor::InAppExtra { .. }
                 | WorkExecutor::Gateway
-                | WorkExecutor::LocalBuild { .. } => {
-                    (CodeEngine::Claude, None)
-                }
+                | WorkExecutor::LocalBuild { .. } => (CodeEngine::Claude, None),
             };
             self.new_code_tab(engine);
             let tab = self.work.code_tabs.last_mut().unwrap();
@@ -3250,10 +3248,7 @@ impl AwiliApp {
         if let Some(id) = self.work.unknown_extra_engine() {
             return Err(unknown_engine_notice(id));
         }
-        engine_precondition(
-            &self.work.effective_engine(),
-            self.work.gateway.enabled,
-        )
+        engine_precondition(&self.work.effective_engine(), self.work.gateway.enabled)
     }
 
     /// Build an `awili-engine` worker for this session, including the on-disk
@@ -3335,10 +3330,10 @@ impl AwiliApp {
             Box::new(transport),
         )
         .map_err(|e| e.to_string())?
-            // U4: the worker reads the conversation's Ask/Auto mode at each
-            // gate from this shared cell (U4b2); the app installs it at the
-            // top of every dispatch.
-            .with_approval_mode(approval);
+        // U4: the worker reads the conversation's Ask/Auto mode at each
+        // gate from this shared cell (U4b2); the app installs it at the
+        // top of every dispatch.
+        .with_approval_mode(approval);
         // Unit 4b commit 5 — the FIRST production launch path: when the
         // current config declares Work-active MCP servers, this worker is
         // composed with the live runtime + coordinator + per-turn drive.
@@ -4267,8 +4262,7 @@ impl AwiliApp {
             crate::agent_launch::LaunchPaths::production()
                 .map(|p| p.home)
                 .as_deref(),
-            inapp_model_name(&self.work.effective_engine())
-            .as_deref(),
+            inapp_model_name(&self.work.effective_engine()).as_deref(),
         )
     }
 
@@ -4388,7 +4382,8 @@ impl AwiliApp {
         self.work.gateway_cmd_tx = None;
         self.work.gateway_stop_pending = false;
         self.work.panel.error = Some(card);
-        self.work_record_graduation();
+        self.work.panel.status = Some(RunStatus::Failed);
+        self.work_finish_stream(cx);
         self.settle_work_chip();
         self.settle_work_folder(cx);
         cx.notify();
@@ -4506,8 +4501,7 @@ impl AwiliApp {
     ) -> bool {
         {
             let gw_cfg = self.work.gateway.clone();
-            let engine =
-                self.work.effective_engine();
+            let engine = self.work.effective_engine();
             // The bearer belongs to the endpoint it was set for: the primary
             // uses the app-resolved key (config over `AWILI_ENGINE_KEY`); an
             // `[[engines]]` extra only its own `api_key` -- never the primary's
@@ -4608,8 +4602,9 @@ impl AwiliApp {
                             self.work.gateway_cmd_tx = None;
                             self.work.gateway_stop_pending = false;
                             self.work.panel.error = Some(msg);
-                            // P8b: the turn ended before a worker existed.
-                            self.work_record_graduation();
+                            // Finalize the accepted turn even though no worker started.
+                            self.work.panel.status = Some(RunStatus::Failed);
+                            self.work_finish_stream(cx);
                             // RC1-S-FIX1: the chip settles on this ending too.
                             self.settle_work_chip();
                             self.settle_work_folder(cx);
@@ -4854,6 +4849,9 @@ impl AwiliApp {
                 self.work.panel.model = model;
                 self.work.panel.approval = None;
                 self.work.panel.credential = None;
+                self.credential_input.update(cx, |c, _| {
+                    c.take();
+                });
                 if status.is_success() {
                     self.work.panel.mark_all_done();
                     if self.work.panel.output.is_none() {
@@ -4894,6 +4892,9 @@ impl AwiliApp {
                 // past the turn it belonged to (matches the upstream desktop).
                 self.work.panel.approval = None;
                 self.work.panel.credential = None;
+                self.credential_input.update(cx, |c, _| {
+                    c.take();
+                });
                 // RC2-RUN (round 3 Minor 12): an in-app turn that completed
                 // is proof the local model answers — a stale "not answering"
                 // from an earlier check goes (never over a check in flight).
@@ -4952,6 +4953,9 @@ impl AwiliApp {
                     }
                 }
                 self.work.panel.credential = None;
+                self.credential_input.update(cx, |c, _| {
+                    c.take();
+                });
                 // RC1-Q-FIX1: a failed run closes its running rows.
                 self.work.panel.close_running_rows(true);
                 self.work.running = false;
@@ -5001,6 +5005,9 @@ impl AwiliApp {
                 }
             }
             WorkUpdate::SudoRequest { request_id } => {
+                self.credential_input.update(cx, |c, _| {
+                    c.take();
+                });
                 self.work.panel.credential = Some(CredentialPrompt {
                     request_id,
                     kind: CredentialKind::Sudo,
@@ -5014,6 +5021,9 @@ impl AwiliApp {
                 env_var,
                 prompt,
             } => {
+                self.credential_input.update(cx, |c, _| {
+                    c.take();
+                });
                 let what = if env_var.is_empty() {
                     "a credential".to_string()
                 } else {
@@ -5624,7 +5634,9 @@ impl AwiliApp {
             let mut provider_done = false;
             while let Ok(ev) = rx.recv().await {
                 match ev {
-                    awili_providers::ProviderEvent::HostApproval(request) => { request.answer(awili_providers::ApprovalChoice::Deny); }
+                    awili_providers::ProviderEvent::HostApproval(request) => {
+                        request.answer(awili_providers::ApprovalChoice::Deny);
+                    }
                     awili_providers::ProviderEvent::Token(t) => {
                         this.update(cx, |app, cx| {
                             if app.work.run_seq == run_id {
@@ -5915,16 +5927,6 @@ impl AwiliApp {
             model: resolved.target.model.clone(),
             host: resolved.target.ssh_host.clone(),
         });
-        // P10/F4: the durable SUBMITTING row goes in BEFORE `running` is shown
-        // and BEFORE `resolved.submit`. The serialized persistence worker
-        // commits it in queue order, so the locally minted request id survives
-        // a crash in the uncertain window. No synchronous ack is added here —
-        // the queue order IS the invariant.
-        crate::build_dispatch::enqueue_submitting(
-            self.persist.as_ref(),
-            &request,
-            &resolved.target_id,
-        );
         self.work.running = true;
         self.work.run_started = Some(std::time::Instant::now());
         self.work.waiting_for_stream_output = true;
@@ -5964,9 +5966,67 @@ impl AwiliApp {
             if key.stopped() {
                 return;
             }
+            let ack = match crate::build_dispatch::commit_submitting(
+                persist.as_ref(),
+                &request,
+                &resolved.target_id,
+            ) {
+                Ok(ack) => ack,
+                Err(error) => {
+                    this.update(cx, |app, cx| {
+                        if app.work.run_seq == run_id {
+                            app.fail_local_build(
+                                &request.conversation_id,
+                                format!("Cannot submit build: {error}"),
+                                cx,
+                            );
+                        }
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            let result = ack
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err("Storage worker stopped".into()));
+            if let Err(error) = result {
+                this.update(cx, |app, cx| {
+                    if app.work.run_seq == run_id && !key.stopped() {
+                        app.fail_local_build(
+                            &request.conversation_id,
+                            format!("Cannot submit build: could not save tracking record: {error}"),
+                            cx,
+                        );
+                    }
+                })
+                .ok();
+                return;
+            }
+            let current = this
+                .update(cx, |app, _| {
+                    app.work.run_seq == run_id
+                        && app
+                            .work
+                            .local_build
+                            .as_ref()
+                            .is_some_and(|active| active.request_id == key.request_id)
+                })
+                .unwrap_or(false);
+            if key.stopped() || !current {
+                crate::build_dispatch::close_row(
+                    persist.as_ref(),
+                    &request.turn_id,
+                    &request.request_id,
+                    &resolved.target_id,
+                    0,
+                    "Cancelled before submission".into(),
+                );
+                return;
+            }
             // Submit ONCE; a lost acknowledgement reconciles by `status` of
             // the SAME id inside the client — never a fresh submit. The
-            // SUBMITTING row was already enqueued before the run was shown.
+            // SUBMITTING row has committed before invoking the runner.
             let outcome = resolved.submit(&request);
             // Record the outcome on the SAME row: the returned state on
             // success, or `unknown` + error text when the submit and its
@@ -6537,6 +6597,10 @@ impl AwiliApp {
     }
 
     pub fn cancel_work_run(&mut self, cx: &mut Context<Self>) {
+        self.work.panel.credential = None;
+        self.credential_input.update(cx, |c, _| {
+            c.take();
+        });
         // RC1-O-FIX8: this run's footer claims only what was seen before
         // the Stop.
         self.work.owner_stopped = true;
@@ -7082,11 +7146,8 @@ impl AwiliApp {
             .as_ref()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
-        let line = crate::agent_brief::mark_outside_scope(
-            line,
-            &folder,
-            &crate::home::home_string(),
-        );
+        let line =
+            crate::agent_brief::mark_outside_scope(line, &folder, &crate::home::home_string());
         if let Some(view) = self.views.get_mut(&conv_id) {
             if let Some(row) = view.rows.get_mut(idx) {
                 row.push_activity(line);
@@ -7560,9 +7621,10 @@ impl AwiliApp {
                 // Keep every existing working control reachable during the
                 // subsequent interior migrations, including the folder tree.
                 .children(self.work_rules_card())
-                .children(self.work_sandbox_line().map(|line| {
-                    crate::ui::Row::new("job-sandbox").title(line).wrap()
-                }))
+                .children(
+                    self.work_sandbox_line()
+                        .map(|line| crate::ui::Row::new("job-sandbox").title(line).wrap()),
+                )
                 .child(self.work_memory_card(cx))
                 .child(self.work_skills_card(cx))
                 .child(
@@ -10434,7 +10496,11 @@ impl AwiliApp {
                     .on_click(cx.listener(|_, _, _, _| {
                         if let Some(path) = awili_config::Config::default_path() {
                             #[cfg(windows)]
-                            let _ = std::process::Command::new(crate::agent_bin::system_tool("notepad")).arg(&path).spawn();
+                            let _ = std::process::Command::new(crate::agent_bin::system_tool(
+                                "notepad",
+                            ))
+                            .arg(&path)
+                            .spawn();
                             #[cfg(not(windows))]
                             let _ = std::process::Command::new("open").arg(&path).spawn();
                         }

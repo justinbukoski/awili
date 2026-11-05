@@ -90,6 +90,10 @@ pub(super) fn run_unix(command: &str, limit: Duration) -> anyhow::Result<Answer>
                             }
                         }
                     }
+                    if out_bytes.len() + err_bytes.len() > 1024 * 1024 {
+                        kill_group(&mut child);
+                        return Err(anyhow::anyhow!("command output exceeds size limit"));
+                    }
                     if err_open && ready(&fds[stderr_index]) {
                         match drain_once(&err_read, &mut buf, &mut err_bytes) {
                             Drain::Eof => err_open = false,
@@ -99,6 +103,10 @@ pub(super) fn run_unix(command: &str, limit: Duration) -> anyhow::Result<Answer>
                                 return Err(anyhow::anyhow!("read stderr failed: {e}"));
                             }
                         }
+                    }
+                    if out_bytes.len() + err_bytes.len() > 1024 * 1024 {
+                        kill_group(&mut child);
+                        return Err(anyhow::anyhow!("command output exceeds size limit"));
                     }
                 }
                 Err(Errno::EINTR) => continue,

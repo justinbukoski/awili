@@ -18,6 +18,24 @@ pub mod v65;
 
 use std::time::Duration;
 
+const MAX_HTTP_BODY: u64 = 1024 * 1024;
+fn bounded_response(resp: reqwest::blocking::Response) -> Result<String, MemoryError> {
+    bounded_body(resp)
+}
+fn bounded_body(reader: impl std::io::Read) -> Result<String, MemoryError> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    reader.take(MAX_HTTP_BODY + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| MemoryError::Parse(format!("response read failed: {e}")))?;
+    if bytes.len() as u64 > MAX_HTTP_BODY {
+        return Err(MemoryError::Parse(
+            "response body exceeds size limit".into(),
+        ));
+    }
+    String::from_utf8(bytes).map_err(|_| MemoryError::Parse("response body is not UTF-8".into()))
+}
+
 use serde::Serialize;
 use serde_json::Value;
 
@@ -461,7 +479,7 @@ impl MemoryClient {
         if !resp.status().is_success() {
             return Err(MemoryError::Status(resp.status().as_u16()));
         }
-        let text = resp.text().map_err(MemoryError::Http)?;
+        let text = bounded_response(resp)?;
         parse_memory_id(&text)
     }
 
@@ -530,7 +548,7 @@ impl MemoryClient {
                 .send()
                 .map_err(MemoryError::Http)?;
             let status = resp.status().as_u16();
-            let text = resp.text().map_err(MemoryError::Http)?;
+            let text = bounded_response(resp)?;
             if (200..300).contains(&status) {
                 let env: V65Recall = serde_json::from_str(&text)
                     .map_err(|e| MemoryError::Parse(format!("v6 recall response: {e}")))?;
@@ -605,7 +623,7 @@ impl MemoryClient {
         if !resp.status().is_success() {
             return Err(MemoryError::Status(resp.status().as_u16()));
         }
-        let text = resp.text().map_err(MemoryError::Http)?;
+        let text = bounded_response(resp)?;
         serde_json::from_str(&text).map_err(|e| MemoryError::Parse(format!("recall response: {e}")))
     }
 
@@ -2176,4 +2194,15 @@ mod tests {
         let out = system_preamble(&[], &past, None).unwrap();
         assert!(out.contains("- [2026-09-25] RC1 on hold"));
     }
+}
+
+#[cfg(test)]
+mod response_size_tests {
+    #[test]
+    fn response_limit_accepts_boundary_and_rejects_one_more() {
+        assert!(super::bounded_body(std::io::repeat(b'a').take(super::MAX_HTTP_BODY)).is_ok());
+        let err = super::bounded_body(std::io::repeat(b'a').take(super::MAX_HTTP_BODY + 1)).unwrap_err();
+        assert!(err.to_string().contains("size limit"));
+    }
+    use std::io::Read as _;
 }

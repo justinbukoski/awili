@@ -27,6 +27,7 @@ pub(crate) fn recording_persist() -> (Persistence, std::sync::mpsc::Receiver<Per
         Persistence {
             tx,
             failed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            recovery: Default::default(),
         },
         rx,
     )
@@ -247,4 +248,60 @@ fn closed_row_is_not_reopened() {
     );
     let row = store.build_job_for_turn("turn-1").unwrap().unwrap();
     assert_eq!(row.request_id, request.request_id, "same row, same id");
+}
+
+/// The same commit gate used by the UI holds a real fake-runner invocation
+/// until the worker acknowledges, and a failed acknowledgement never invokes it.
+#[test]
+fn commit_ack_gates_runner_and_failure_never_submits() {
+    let _fixture = crate::exec_fixture::lock(&SCRIPT_FIXTURE);
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let resolved = ResolvedBuild::resolve_with(&targets(), "stryx", fake_ssh(root, 0)).unwrap();
+    let request = build_request(&resolved, &input("turn-ack", "task".into())).unwrap();
+    fs::write(
+        root.join("snapshot.json"),
+        serde_json::to_vec(&snapshot(&request, BuildState::Queued)).unwrap(),
+    )
+    .unwrap();
+    assert!(crate::build_dispatch::commit_submitting(None, &request, &resolved.target_id).is_err());
+    let (persist, rx) = recording_persist();
+    let ack =
+        crate::build_dispatch::commit_submitting(Some(&persist), &request, &resolved.target_id)
+            .unwrap();
+    let reply = match rx.recv().unwrap() {
+        PersistCmd::CommitBuildJob { row, reply } => {
+            assert_eq!(row.request_id, request.request_id);
+            reply
+        }
+        _ => panic!("expected commit"),
+    };
+    let worker = std::thread::spawn(move || {
+        if ack.recv_blocking().unwrap().is_ok() {
+            resolved.submit(&request).unwrap();
+        }
+    });
+    assert!(!root.join("calls").exists());
+    reply.send_blocking(Ok(())).unwrap();
+    worker.join().unwrap();
+    assert_eq!(fs::read_to_string(root.join("calls")).unwrap(), "submit\n");
+
+    fs::remove_file(root.join("calls")).unwrap();
+    let resolved = ResolvedBuild::resolve_with(&targets(), "stryx", fake_ssh(root, 0)).unwrap();
+    let request = build_request(&resolved, &input("turn-fail", "task".into())).unwrap();
+    let ack =
+        crate::build_dispatch::commit_submitting(Some(&persist), &request, &resolved.target_id)
+            .unwrap();
+    let reply = match rx.recv().unwrap() {
+        PersistCmd::CommitBuildJob { reply, .. } => reply,
+        _ => panic!("expected commit"),
+    };
+    let worker = std::thread::spawn(move || {
+        if ack.recv_blocking().unwrap().is_ok() {
+            resolved.submit(&request).unwrap();
+        }
+    });
+    reply.send_blocking(Err("disk full".into())).unwrap();
+    worker.join().unwrap();
+    assert!(!root.join("calls").exists());
 }

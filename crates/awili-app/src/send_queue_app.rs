@@ -9,6 +9,22 @@ use awili_gateway::run_events::RunStatus;
 use gpui::AnyElement;
 use std::path::PathBuf;
 
+#[cfg(test)]
+thread_local! { pub(crate) static FAIL_STAGED_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+fn read_staged(
+    store: &awili_persist::Store,
+    conv: &str,
+) -> Result<Vec<awili_persist::Attachment>, String> {
+    #[cfg(test)]
+    if FAIL_STAGED_READ.with(|flag| flag.get()) {
+        return Err("injected attachment read failure".into());
+    }
+    store
+        .get_staged_attachments(conv)
+        .map_err(|e| e.to_string())
+}
+
 impl AwiliApp {
     /// Enter on a busy composer in Work/Chat: the draft joins this
     /// conversation's queue instead of being refused, together with what the
@@ -39,11 +55,19 @@ impl AwiliApp {
         self.prompt_history.record(&text);
         // The files on the tray belong to this message: take them off now so
         // the next one does not pick them up.
-        let attachments = self
+        let attachments = match self
             .search_store
             .as_ref()
-            .and_then(|store| store.get_staged_attachments(&conv).ok())
-            .unwrap_or_default();
+            .map(|store| read_staged(store, &conv))
+        {
+            Some(Ok(attachments)) => attachments,
+            Some(Err(error)) => {
+                self.restore_draft(&text, cx);
+                self.show_sticky_toast(format!("Could not read attached files — {error}"), cx);
+                return;
+            }
+            None => Vec::new(),
+        };
         if !attachments.is_empty() {
             let cleared = self
                 .search_store
@@ -213,12 +237,25 @@ impl AwiliApp {
         self.guard_submit(&item.snap.body);
         // The files typed for LATER messages stay off the tray while this one
         // goes out (its own are already in its text).
-        let stash: Vec<i64> = self
+        let stash: Vec<i64> = match self
             .search_store
             .as_ref()
-            .and_then(|store| store.get_staged_attachments(conv).ok())
-            .map(|list| list.iter().map(|a| a.id).collect())
-            .unwrap_or_default();
+            .map(|store| read_staged(store, conv))
+        {
+            Some(Ok(list)) => list.iter().map(|a| a.id).collect(),
+            Some(Err(error)) => {
+                self.work.send_queue.pause(
+                    conv,
+                    PauseReason::Refused(format!(
+                        "Could not read files for the next message: {error}"
+                    )),
+                );
+                self.submit_guard = None;
+                cx.notify();
+                return;
+            }
+            None => Vec::new(),
+        };
         if !stash.is_empty() {
             let cleared = self
                 .search_store

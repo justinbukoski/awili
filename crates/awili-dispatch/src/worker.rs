@@ -723,6 +723,42 @@ impl Drop for JobScratch {
         let _ = std::fs::remove_dir_all(&self.path);
     }
 }
+/// Materialize committed blob bytes directly; archive attributes and filters never run.
+#[cfg(target_os = "linux")]
+fn export_committed_tree(repo: &Path, sha: &str, dest: &Path) -> Result<()> {
+    use std::os::unix::{ffi::OsStringExt, fs::symlink};
+    let listing = git(Some(repo), &["ls-tree", "-rz", "--full-tree", sha])?;
+    ensure!(listing.status.success(), "cannot list committed tree");
+    for entry in listing.stdout.split(|b| *b == 0).filter(|e| !e.is_empty()) {
+        let tab = entry.iter().position(|b| *b == b'\t').ok_or_else(|| anyhow!("invalid tree entry"))?;
+        let header = std::str::from_utf8(&entry[..tab])?;
+        let mut parts = header.split_whitespace();
+        let mode = parts.next().ok_or_else(|| anyhow!("missing tree mode"))?;
+        let kind = parts.next().ok_or_else(|| anyhow!("missing tree kind"))?;
+        let oid = parts.next().ok_or_else(|| anyhow!("missing object id"))?;
+        ensure!(parts.next().is_none() && kind == "blob", "unsupported committed tree entry");
+        let relative = PathBuf::from(std::ffi::OsString::from_vec(entry[tab + 1..].to_vec()));
+        ensure!(relative.components().all(|c| matches!(c, std::path::Component::Normal(_))), "invalid committed path");
+        let path = dest.join(relative);
+        fs::create_dir_all(path.parent().ok_or_else(|| anyhow!("missing parent"))?)?;
+        let blob = git(Some(repo), &["cat-file", "blob", oid])?;
+        ensure!(blob.status.success(), "cannot read committed blob");
+        match mode {
+            "100644" | "100755" => {
+                fs::write(&path, &blob.stdout)?;
+                fs::set_permissions(&path, fs::Permissions::from_mode(if mode == "100755" { 0o755 } else { 0o644 }))?;
+            }
+            "120000" => symlink(std::ffi::OsString::from_vec(blob.stdout), &path)?,
+            _ => bail!("unsupported committed file mode {mode}"),
+        }
+    }
+    Ok(())
+}
+#[cfg(not(target_os = "linux"))]
+fn export_committed_tree(_repo: &Path, _sha: &str, _dest: &Path) -> Result<()> {
+    bail!("verifier isolation requires Linux")
+}
+
 /// Non-Linux verifier launch path: isolation cannot be provided, so the
 /// verifier is never started (fail closed).
 #[cfg(not(target_os = "linux"))]
@@ -837,9 +873,9 @@ fn verify_sandbox_args(
 }
 /// S3(c): launch the verifier through its fixed bwrap profile over the
 /// source export. No fallback to a direct command exists on this path.
-/// The export is extracted by this trusted launcher BEFORE the isolated
-/// process is built, so the verifier's sandbox view is exactly the
-/// committed source archive — nothing the model could plant. The verifier
+/// The trusted launcher materializes the committed tree BEFORE the isolated
+/// process is built, so the verifier sees the committed source bytes rather
+/// than the model's mutable checkout. The verifier
 /// starts from an EMPTY environment (`env_clear`) plus `verifier_env`.
 #[cfg(target_os = "linux")]
 fn verify_sandboxed(
@@ -851,34 +887,6 @@ fn verify_sandboxed(
     log: File,
     env: &[(&str, &str)],
 ) -> Result<i32> {
-    // Extract the source archive into the export view; the tar is the only
-    // content the verifier will see. Use --no-same-owner / --no-same-permissions
-    // to avoid EPERM in the sandbox; the files are read-only anyway.
-    let tar = export.join("source.tar");
-    ensure!(
-        tar.is_file(),
-        "source export archive missing at {}",
-        tar.display()
-    );
-    let extract = Command::new("/usr/bin/tar")
-        .args([
-            "-x",
-            "-f",
-            tar.to_str().unwrap_or_default(),
-            "-C",
-            export.to_str().unwrap_or_default(),
-            "--no-same-owner",
-            "--no-same-permissions",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .context("tar extract failed to start")?;
-    ensure!(
-        extract.code().unwrap_or(-1) == 0,
-        "tar extract of source export failed"
-    );
     // HOME/TMPDIR/GIT_DIR must name the paths as bound inside the sandbox.
     let scratch = scratch
         .canonicalize()
@@ -1045,29 +1053,12 @@ fn execute(owned: &mut Owned) -> Result<()> {
         git(Some(&git_view), &["update-ref", "--no-deref", "HEAD", &sha])?,
         "pin trusted git view HEAD",
     )?;
-    // The source export view: a directory whose ONLY contents are the result
-    // commit's source archive, extracted by the trusted launcher below.
+    // Materialize only the result commit's blobs in the source export view.
     // Anything else under the job root stays out of the verifier's view.
     let export_view = store.root.join(format!("{id}.export-view"));
     fs::remove_dir_all(&export_view).ok();
     fs::create_dir_all(&export_view)?;
-    let tar = export_view.join("source.tar");
-    let sha_ref = sha.as_str();
-    ensure!(
-        git(
-            Some(&git_view),
-            &[
-                "archive",
-                "--format=tar",
-                "-o",
-                tar.to_str().context("non-UTF8 export path")?,
-                sha_ref,
-            ],
-        )?
-        .status
-        .success(),
-        "git archive of the result commit failed"
-    );
+    export_committed_tree(&git_view, &sha, &export_view)?;
     let verify_log = store.log_for_append(id)?;
     let rc = verify_sandboxed(
         verifier_profile,
@@ -1124,6 +1115,37 @@ mod tests {
     /// The worker's Git home is process-global: tests that set it run one
     /// at a time.
     static GIT_HOME_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn committed_export_ignores_archive_attributes() {
+        let _guard = GIT_HOME_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        init_git_home(&tmp.path().join("home")).unwrap();
+        let repo = tmp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        assert!(git(Some(&repo), &["init"]).unwrap().status.success());
+        fs::write(repo.join(".gitattributes"), "hidden export-ignore\nsubst export-subst\n").unwrap();
+        fs::write(repo.join("hidden"), b"committed bytes\n").unwrap();
+        fs::write(repo.join("subst"), b"$Format:%H$\n").unwrap();
+        use std::os::unix::ffi::OsStringExt;
+        let odd = std::ffi::OsString::from_vec(b"nonutf8-\xff".to_vec());
+        fs::write(repo.join(&odd), b"odd bytes").unwrap();
+        fs::write(repo.join("executable"), b"script").unwrap();
+        fs::set_permissions(repo.join("executable"), fs::Permissions::from_mode(0o755)).unwrap();
+        std::os::unix::fs::symlink("hidden", repo.join("link")).unwrap();
+        assert!(git(Some(&repo), &["add", "."]).unwrap().status.success());
+        assert!(git(Some(&repo), &["-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-m", "fixture"]).unwrap().status.success());
+        let sha = git_text(&repo, &["rev-parse", "HEAD"], "fixture sha").unwrap();
+        let export = tmp.path().join("export"); fs::create_dir(&export).unwrap();
+        export_committed_tree(&repo, &sha, &export).unwrap();
+        assert_eq!(fs::read(export.join("hidden")).unwrap(), b"committed bytes\n");
+        assert_eq!(fs::read(export.join("subst")).unwrap(), b"$Format:%H$\n");
+        assert_eq!(fs::read(export.join(".gitattributes")).unwrap(), fs::read(repo.join(".gitattributes")).unwrap());
+        assert_eq!(fs::read(export.join(odd)).unwrap(), b"odd bytes");
+        assert_eq!(fs::read_link(export.join("link")).unwrap(), PathBuf::from("hidden"));
+        assert_eq!(fs::metadata(export.join("executable")).unwrap().permissions().mode() & 0o777, 0o755);
+    }
 
     /// A job that ends Failed has its reason in worker.log, written by the
     /// worker itself before it publishes the state. (The reason used to be

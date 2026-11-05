@@ -190,8 +190,9 @@ impl Ledger {
             .append(true)
             .open(path)
             .with_context(|| format!("open ledger {} for append", path.display()))?;
+        file.lock().context("lock ledger for append")?;
+        let line = format!("{line}\n");
         file.write_all(line.as_bytes())
-            .and_then(|()| file.write_all(b"\n"))
             .and_then(|()| file.sync_all())
             .with_context(|| format!("append to ledger {}", path.display()))?;
         Ok(())
@@ -207,6 +208,7 @@ impl Ledger {
                 return Err(error).with_context(|| format!("open ledger {}", path.display()))
             }
         };
+        file.lock_shared().context("lock ledger for reading")?;
         let mut entries = Vec::new();
         for (index, line) in BufReader::new(file).lines().enumerate() {
             let number = index + 1;

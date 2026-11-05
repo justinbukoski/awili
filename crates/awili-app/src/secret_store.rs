@@ -67,7 +67,8 @@ pub(crate) fn secure_typed_provider_keys(
         if unchanged {
             continue;
         }
-        let reference = store_typed_key(store, &provider_account(&p.name), typed)?;
+        let account = format!("{}:{}", provider_account(&p.name), uuid::Uuid::new_v4());
+        let reference = store_typed_key(store, &account, typed)?;
         p.api_key = Some(reference);
     }
     Ok(())
@@ -114,15 +115,6 @@ pub(crate) fn catalog_secret_account(item_id: &str) -> Option<&'static str> {
     }
 }
 
-/// What the config holds now for a catalog secret (to find a reference that
-/// clearing it would orphan).
-pub(crate) fn catalog_secret_current(cfg: &Config, item_id: &str) -> Option<String> {
-    match item_id {
-        "memory.token" => Some(cfg.memory.token.clone()),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,11 +145,10 @@ mod tests {
         let mut next = current.providers.clone();
         next[0].api_key = Some("sk-new".into());
         secure_typed_provider_keys(&mut next, &current, &store).unwrap();
-        assert_eq!(next[0].api_key.as_deref(), Some("secret:provider:openai"));
-        assert_eq!(
-            store.get("provider:openai").unwrap().as_deref(),
-            Some("sk-new")
-        );
+        let account =
+            awili_config::secrets::parse_secret_ref(next[0].api_key.as_deref().unwrap()).unwrap();
+        assert!(account.starts_with("provider:openai:"));
+        assert_eq!(store.get(account).unwrap().as_deref(), Some("sk-new"));
     }
 
     #[test]
@@ -182,8 +173,10 @@ mod tests {
         next.push(added);
         secure_typed_provider_keys(&mut next, &current, &store).unwrap();
         assert_eq!(next[0].api_key, None);
-        assert_eq!(next[1].api_key.as_deref(), Some("secret:provider:second"));
-        assert_eq!(store.accounts(), vec!["provider:second"]);
+        let account =
+            awili_config::secrets::parse_secret_ref(next[1].api_key.as_deref().unwrap()).unwrap();
+        assert!(account.starts_with("provider:second:"));
+        assert_eq!(store.accounts(), vec![account]);
     }
 
     #[test]

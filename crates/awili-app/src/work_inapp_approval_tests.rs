@@ -1623,14 +1623,20 @@ fn rc1n_in_app_deny_ends_the_turn_in_one_plain_line(cx: &mut gpui::TestAppContex
             .last()
             .map(|m| m.text.clone())
             .unwrap();
-        // RC2-R1F1: the declined card's words name the whole path.
+        // The single-line denial quotes at most 120 characters, including the
+        // ellipsis for long isolated test paths.
+        let prompt = format!(
+            "Write the file {}/hello3.txt (2 characters)",
+            folder.display()
+        );
+        let shown = if prompt.chars().count() > 120 {
+            format!("{}…", prompt.chars().take(119).collect::<String>())
+        } else {
+            prompt
+        };
         assert_eq!(
             reply,
-            format!(
-                "Okay \u{2014} you declined \u{201C}Write the file {}/hello3.txt (2 characters)\
-                 \u{201D}, so it was not done.",
-                folder.display()
-            )
+            format!("Okay — you declined “{shown}”, so it was not done.")
         );
         assert_eq!(app.composer.read(cx).text(), request, "the request is back");
         assert_eq!(

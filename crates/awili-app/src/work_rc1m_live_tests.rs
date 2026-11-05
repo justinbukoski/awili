@@ -14,8 +14,9 @@
 //!   scripted model for the write gates (w), (w+), (w').
 //! - [`rc1m_live_agents_scripted`] — the real `claude` and `codex` CLIs with
 //!   the owner's setup, their model replaced by [`fake_vendor`]: delivery,
-//!   launch inputs, the Ask hold and the Chat hold of a forced write, the plan
-//!   card, and the approved write.
+//!   launch inputs, the Ask hold of a forced write, the plan card, and the
+//!   approved write. The old Chat-only hold was removed with Chat: Workshop
+//!   is tool-capable, as covered by `workshop_dispatch_tests`.
 //! - [`rc1m_quality_sample_agents`] — real models; a sample, not a gate.
 //!
 //! Every live test is `#[ignore]`d and FAILS when a prerequisite is missing.
@@ -2503,8 +2504,10 @@ fn owner_agent_memory() -> awili_config::AgentMemoryConfig {
 ///   repo untouched (git status, file events); the plan card opens;
 ///   Approve runs the approved step (not read-only), whose forced write runs
 ///   and makes the marker after the approval;
-/// - the owner's Chat: launched read-only, the forced write is held.
-/// The engines are both required; there is no subset run.
+/// Chat-only execution was removed by the owner's Workshop consolidation
+/// (docs/v2/functionality-recovery/CONSULTATION-R2.md); its replacement
+/// dispatch is covered by `workshop_dispatch_tests`. This gate tests the
+/// explicit Ask boundary instead. Both engines are required; no subset run.
 #[gpui::test]
 #[ignore = "live: needs AWILI_LIVE_RC1M_REPO (a scratch repo with AGENTS.md and CLAUDE.md) and the owner's claude and codex"]
 fn rc1m_live_agents_scripted(cx: &mut gpui::TestAppContext) {
@@ -2717,7 +2720,12 @@ fn rc1m_live_agents_scripted(cx: &mut gpui::TestAppContext) {
             if r.is_ok() { "PASS" } else { "FAIL" }
         ));
     }
-    assert_eq!(results.len(), 14, "both engines, every gate");
+    let actual: Vec<_> = results.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(
+        actual,
+        scripted_agent_gate_names(),
+        "both engines, every gate"
+    );
     let failures: Vec<_> = results.iter().filter(|(_, r)| r.is_err()).collect();
     assert!(failures.is_empty(), "live gates failed: {failures:?}");
 }
@@ -2725,6 +2733,33 @@ fn rc1m_live_agents_scripted(cx: &mut gpui::TestAppContext) {
 // ---------------------------------------------------------------------------
 // Model-quality sample (not a gate)
 // ---------------------------------------------------------------------------
+
+fn scripted_agent_gate_names() -> Vec<&'static str> {
+    vec![
+        "claude launch",
+        "claude delivery",
+        "claude ask-hold",
+        "claude repo-quiet",
+        "claude plan-card",
+        "claude approved-write",
+        "codex launch",
+        "codex delivery",
+        "codex ask-hold",
+        "codex repo-quiet",
+        "codex plan-card",
+        "codex approved-write",
+    ]
+}
+
+#[test]
+fn scripted_agent_gate_contract_has_all_named_workshop_gates() {
+    let names = scripted_agent_gate_names();
+    assert_eq!(names.len(), 12);
+    assert_eq!(
+        names.iter().collect::<std::collections::HashSet<_>>().len(),
+        names.len()
+    );
+}
 
 /// One real CLI turn the way the Work agent lane runs it.
 fn real_turn(
