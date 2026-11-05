@@ -6325,3 +6325,33 @@ fn s6_a_revoke_between_rounds_stops_the_next_matching_action() {
         "round 1 rode the grant; after Revoke, round 2 asked again"
     );
 }
+
+#[test]
+fn reasoning_only_output_limit_is_a_recoverable_failure() {
+    let root = tempfile::tempdir().unwrap();
+    let raw = concat!(
+        "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"},\"finish_reason\":null}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}],\"usage\":{\"prompt_tokens\":9468,\"completion_tokens\":2048}}\n\n",
+        "data: [DONE]\n\n",
+    );
+    let r = run(&root, vec![raw.into()], &mut no_dialog_expected());
+    assert_eq!(r.records.iter().filter(|r| matches!(r, LogRecordV1::TurnClosed { outcome, .. } if outcome == "failed")).count(), 1);
+    match r.result {
+        Err(SeamError::TurnFailed { reason, report }) => {
+            assert!(reason.contains("output-token limit"));
+            assert!(reason.contains("reasoning budget"));
+            assert!(report.final_text.is_empty());
+            assert_eq!(report.requests.len(), 1, "a budget failure must not automatically retry");
+            assert!(report.events.iter().any(|e| matches!(e, AgentEvent::UsageReported(u) if u.completion_tokens == 2048)));
+        }
+        other => panic!("expected recoverable output-limit failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn visible_answer_at_output_limit_is_preserved() {
+    let root = tempfile::tempdir().unwrap();
+    let raw = sse_text_final("A visible answer").replace("\"stop\"", "\"length\"");
+    let r = run(&root, vec![raw], &mut no_dialog_expected());
+    assert_eq!(r.result.unwrap().final_text, "A visible answer");
+}
