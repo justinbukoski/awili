@@ -173,6 +173,7 @@ impl crate::AwiliApp {
                     host: strip::host_name(&label, &engine.base_url),
                     addr: strip::host_of(&engine.base_url).unwrap_or_default(),
                     model: model_title(&label),
+                    model_id: engine.model.clone(),
                 },
                 engine: Some(engine),
             })

@@ -1269,9 +1269,10 @@ fn probe_codex_app_server_under_sandbox() {
                 .filter(|s| !s.is_empty()),
             model: Some("gpt-6-luna".into()),
             autonomy: Autonomy::Autonomous,
+            host_approvals: false,
         },
     };
-    let events = crate::codex_app_server::run_turn(turn, cancel_rx, &tx, &slot, &None)
+    let events = crate::codex_app_server::run_turn(turn, cancel_rx, &tx, &slot, &None, Default::default())
         .map_err(|_| "app server unavailable")
         .unwrap();
     drop(tx);
@@ -1368,9 +1369,10 @@ fn codex_app_server_starts_under_the_profile_only_when_given() {
                 resume_id: None,
                 model: None,
                 autonomy: Autonomy::Autonomous,
+                host_approvals: false,
             },
         };
-        let _ = crate::codex_app_server::run_turn(turn, cancel_rx, &tx, &slot, &None);
+        let _ = crate::codex_app_server::run_turn(turn, cancel_rx, &tx, &slot, &None, Default::default());
         assert_eq!(wait_for(&rec.path().join("inside_rc")), "0");
         let rc = wait_for(&rec.path().join("outside_rc"));
         if with_profile {

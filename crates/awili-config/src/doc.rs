@@ -309,6 +309,18 @@ impl ConfigDoc {
                 _ => {}
             }
         }
+        {
+            let config = self.config();
+            if !out.iter().any(|e| e.section == "engine" && e.key == "max_output_tokens") {
+                out.push(entry("engine".into(), "max_output_tokens", Target::Table { table: "engine".into(), key: "max_output_tokens".into() }, &Value::from(config.engine.resolved_max_output_tokens() as i64)));
+            }
+            for (index, engine) in config.engines.iter().enumerate() {
+                let section = format!("engines[{index}]");
+                if !out.iter().any(|e| e.section == section && e.key == "max_output_tokens") {
+                    out.push(entry(section, "max_output_tokens", Target::ArrayTable { array: "engines".into(), index, key: "max_output_tokens".into() }, &Value::from(engine.to_engine_config().resolved_max_output_tokens() as i64)));
+                }
+            }
+        }
         out
     }
 
@@ -660,7 +672,7 @@ base_url = "https://api.anthropic.com"
 models = ["claude-opus-4-8"]
 "#;
 
-    fn temp_path(tag: &str) -> PathBuf {
+    pub(super) fn temp_path(tag: &str) -> PathBuf {
         static N: AtomicU64 = AtomicU64::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
         let dir =
@@ -1315,5 +1327,44 @@ models = ["claude-opus-4-8"]
             0o600,
             "a first-run config carries secrets and must be owner-only"
         );
+    }
+}
+
+#[cfg(test)]
+mod output_settings_tests {
+    use super::*;
+
+    #[test]
+    fn output_setting_is_editable_and_saved_even_without_an_engine_table() {
+        let mut doc = ConfigDoc::parse("# keep this comment\n").unwrap();
+        let row = doc.entries().into_iter().find(|e| e.section == "engine" && e.key == "max_output_tokens").unwrap();
+        assert_eq!(row.kind, ValueKind::Int);
+        assert!(!row.is_secret());
+        doc.set_integer(&row.target, 16384).unwrap();
+        let path = super::tests::temp_path("output-budget");
+        doc.save_to(&path).unwrap();
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("# keep this comment"));
+        assert_eq!(ConfigDoc::parse(&text).unwrap().config().engine.max_output_tokens, Some(16384));
+    }
+
+    #[test]
+    fn model_budgets_are_independent_and_invalid_values_roll_back() {
+        let mut doc = ConfigDoc::parse("[engine]\nmax_output_tokens=16384\n[[engines]]\nid='small'\nwindow_tokens=16384\n").unwrap();
+        let row = doc.entries().into_iter().find(|e| e.section == "engines[0]" && e.key == "max_output_tokens").unwrap();
+        doc.set_integer(&row.target, 4096).unwrap();
+        assert_eq!(doc.config().engines[0].max_output_tokens, Some(4096));
+        assert_eq!(doc.config().engine.max_output_tokens, Some(16384));
+        let before = doc.text();
+        assert!(doc.set_integer(&row.target, 0).is_err());
+        assert!(doc.set_integer(&row.target, 16384).is_err());
+        assert_eq!(doc.text(), before);
+    }
+
+    #[test]
+    fn older_small_context_configs_remain_loadable() {
+        let cfg = Config::parse("[engine]\nwindow_tokens=4096\n").unwrap();
+        assert_eq!(cfg.engine.max_output_tokens, None);
+        assert!(cfg.engine.resolved_max_output_tokens() + 512 < cfg.engine.window_tokens);
     }
 }

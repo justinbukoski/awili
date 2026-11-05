@@ -29,6 +29,7 @@ fn extra(id: &str, label: &str, base: &str, model: &str, key: &str) -> ExtraEngi
         dialect: "chat-completions".into(),
         window_tokens: 65_536,
         request_timeout_s: 30,
+        max_output_tokens: None,
     }
 }
 

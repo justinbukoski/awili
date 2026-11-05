@@ -46,6 +46,7 @@ mod code_provider;
 mod code_reopen;
 mod code_run;
 mod codex_app_server;
+mod codex_approval;
 mod codex_catalog;
 mod command_catalog;
 mod command_center;
@@ -6277,6 +6278,15 @@ impl AwiliApp {
     /// from [`AwiliApp::apply_runtime_config`] so a live-refresh test can
     /// assert it against a real [`WorkState`].
     fn refresh_work_endpoints(work: &mut WorkState, cfg: &Config) {
+        if (work.engine != cfg.engine || work.extra_engines != cfg.engines)
+            && matches!(work.worker_identity, Some(crate::work_run_identity::WorkRunIdentity::OwnedEngine { .. }))
+        {
+            if work.running || work.gateway_stop_pending {
+                work.retire_after_run = true;
+            } else {
+                work::retire_in_app_worker(work);
+            }
+        }
         // L1e2a-FIX1: a new local endpoint is unchecked; the old result and
         // any probe in flight no longer count.
         if work.engine.base_url != cfg.engine.base_url {
@@ -6730,10 +6740,13 @@ impl AwiliApp {
         // below. A late child from another harness must never write its id into
         // this accepted turn's slot.
         if session.project_folder.as_deref() != Some(cwd.as_str()) {
+            session.approval_session = Default::default();
             session.project_folder = Some(cwd.clone());
         }
         session.engine = engine;
         session.model = model.clone();
+        let approval_session = session.approval_session.clone();
+        session.host_approval = None;
         let slot = crate::code_provider::fresh_session_slot(bridge.resume_id());
         session.session_slot = std::sync::Arc::clone(&slot);
 
@@ -6801,6 +6814,7 @@ impl AwiliApp {
             model.clone(),
             slot,
         )
+        .with_approval_session(approval_session)
         .with_search_paths(self.work.agents.search_paths.clone())
         .with_agent_memory(self.work.agents.memory.clone())
         .with_agents_md(self.work.agents.agents_md.clone())
@@ -6869,6 +6883,14 @@ impl AwiliApp {
                     break;
                 }
                 match ev {
+                    ProviderEvent::HostApproval(request) => {
+                        this.update(cx, |app, cx| {
+                            if let Some(session) = app.work.code_tabs.iter_mut().find(|s| s.id == tab_id) {
+                                session.host_approval = Some(request);
+                                cx.notify();
+                            }
+                        }).ok();
+                    }
                     ProviderEvent::Token(t) => {
                         this
                             .update(cx, |app, cx| {
@@ -6968,6 +6990,10 @@ impl AwiliApp {
         let active = index;
         let mut stopped = None;
         if let Some(session) = self.work.code_tabs.get_mut(active) {
+            if let Some(request) = session.host_approval.take() {
+                request.answer(awili_providers::ApprovalChoice::Deny);
+            }
+            session.approval_session = Default::default();
             if let Some(tx) = session.stream_abort_tx.take() {
                 session.history.note_stop();
                 let _ = tx.send(());

@@ -35,6 +35,7 @@ fn run(source: &str, prompt: &str) -> (String, String, usize) {
         resume_id: Some(source.into()),
         model: Some("gpt-6.1-sol".into()),
         autonomy: Autonomy::AskFirst,
+        host_approvals: false,
     });
     let mut pending = protocol.start();
     let mut answer = String::new();

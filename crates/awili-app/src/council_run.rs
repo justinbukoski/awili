@@ -1592,6 +1592,7 @@ impl crate::AwiliApp {
                             this.update(cx, |app, _| app.council_on_changed(&key)).ok();
                         }
                     }
+                    ProviderEvent::HostApproval(request) => { request.answer(awili_providers::ApprovalChoice::Deny); }
                     ProviderEvent::ToolAttemptFailed => {}
                 }
             }

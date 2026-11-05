@@ -83,6 +83,7 @@ pub struct CodeProvider {
     council: Option<String>,
     /// rc.4 S7: `[work.sandbox]`; default OFF (the launch is then unchanged).
     sandbox: awili_config::SandboxConfig,
+    approval_session: Option<crate::codex_approval::Session>,
 }
 
 impl CodeProvider {
@@ -112,7 +113,13 @@ impl CodeProvider {
             agents_md: None,
             council: None,
             sandbox: awili_config::SandboxConfig::default(),
+            approval_session: None,
         }
+    }
+
+    pub(crate) fn with_approval_session(mut self, session: crate::codex_approval::Session) -> Self {
+        self.approval_session = Some(session);
+        self
     }
 
     /// Hand the `[work.agents.memory]` section to the launch.
@@ -218,6 +225,7 @@ impl CodeProvider {
         warm_for: Option<String>,
     ) -> async_channel::Receiver<ProviderEvent> {
         let (tx, rx) = async_channel::unbounded::<ProviderEvent>();
+        let approval_session = self.approval_session.clone();
         let termination_observed = self.termination_observed.clone();
         let exec_observed = self.exec_observed.clone();
         let bin = self.bin.clone();
@@ -265,6 +273,7 @@ impl CodeProvider {
                 warm_only,
                 council,
                 sandbox,
+                approval_session,
             );
         });
 
@@ -771,7 +780,9 @@ fn run_code_stream(
     warm_only: bool,
     council: Option<String>,
     sandbox: awili_config::SandboxConfig,
+    approval_session: Option<crate::codex_approval::Session>,
 ) {
+
     // RC2-R2F10: only a Codex server can be made ready ahead (RC2-R2G5,
     // RC2-R2I: for `council`, the council it is made for). RC2-R3: and a
     // council's Claude member (`claude_warm`).
@@ -881,6 +892,7 @@ fn run_code_stream(
     let cancel_rx =
         if engine == CodeEngine::Codex && !crate::codex_app_server::exec_fallback_for(&bin) {
             let mut server_args = engine.app_server_args(autonomy);
+            if approval_session.is_some() { server_args.extend(["-c".into(), "approvals_reviewer=\"user\"".into()]); }
             server_args.extend(launch.args.iter().cloned());
             if let Some(spec) = &connectors_mcp {
                 server_args.extend(codex_connector_overrides(spec));
@@ -900,6 +912,7 @@ fn run_code_stream(
                     resume_id: resume_id.clone(),
                     model: model.clone(),
                     autonomy,
+                    host_approvals: approval_session.is_some(),
                 },
             };
             // RC2-R2F10: made ready for a later question, not run.
@@ -913,6 +926,7 @@ fn run_code_stream(
                 &tx,
                 &session_slot,
                 &termination_observed,
+                approval_session.unwrap_or_default(),
             ) {
                 Ok(events) => {
                     end_turn(None, events, |ev| {

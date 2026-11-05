@@ -6355,3 +6355,46 @@ fn visible_answer_at_output_limit_is_preserved() {
     let r = run(&root, vec![raw], &mut no_dialog_expected());
     assert_eq!(r.result.unwrap().final_text, "A visible answer");
 }
+
+struct BudgetScript {
+    script: Script,
+    budget: u64,
+    sent: Arc<std::sync::atomic::AtomicUsize>,
+}
+impl Transport for BudgetScript {
+    fn max_output_tokens(&self) -> u64 { self.budget }
+    fn stream(&mut self, body: &str) -> Result<String, SeamError> {
+        self.sent.fetch_add(1, Ordering::SeqCst);
+        self.script.stream(body)
+    }
+}
+
+fn run_budgeted(root: &tempfile::TempDir, budget: u64, window: u64, bodies: Vec<String>) -> (Result<TurnReport, SeamError>, usize) {
+    let host = host().lock().unwrap();
+    let mut log = ExecutionLog::open(MemLog::default(), "budget-session").unwrap();
+    let mut grants = ExecutionLog::open_grant_store(MemLog::default()).unwrap();
+    let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut transport = BudgetScript { script: Script { bodies: bodies.into() }, budget, sent: sent.clone() };
+    let result = run_turn(&host, &mut transport, "test-model", root.path().to_str().unwrap(), "read the note", &mut no_dialog_expected(), &mut log, &mut grants, &[], &Executors::builtin_only(), &awili_engine_authz::NoInstallAuthority, &RootsAcceptance::default(), window, "budget-turn", &mut ContextHistory::new());
+    (result, sent.load(Ordering::SeqCst))
+}
+
+#[test]
+fn configured_output_budget_reaches_initial_and_tool_continuation_requests() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("note.txt"), "read only fixture").unwrap();
+    let (result, sent) = run_budgeted(&root, 16384, 131072, vec![sse_tool_round(&[("read", "fs.read", r#"{"path":"note.txt"}"#)]), sse_text_final("done")]);
+    let report = result.unwrap();
+    assert_eq!(sent, 2);
+    assert_eq!(report.final_text, "done");
+    for body in report.requests { assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap()["max_tokens"], 16384); }
+}
+
+#[test]
+fn configured_output_reservation_prevents_an_overfull_request_from_being_sent() {
+    let root = tempfile::tempdir().unwrap();
+    let (result, sent) = run_budgeted(&root, 9487, 10000, vec![sse_text_final("must not be requested")]);
+    assert!(matches!(result, Err(SeamError::Context(_))));
+    assert_eq!(sent, 0);
+    assert_eq!(input_budget_tokens(projection_window_tokens(10000, 9487)), 1);
+}

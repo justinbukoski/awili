@@ -58,6 +58,7 @@ fn codex_app_server_reports_the_window_with_the_turn_end() {
         resume_id: None,
         model: None,
         autonomy: Autonomy::Autonomous,
+        host_approvals: false,
     });
     turn.start();
     turn.on_line(r#"{"id":1,"result":{"userAgent":"awili/0.160.1","codexHome":"/h/.codex","platformFamily":"unix","platformOs":"macos"}}"#);

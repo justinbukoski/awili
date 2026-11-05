@@ -672,6 +672,8 @@ mod tests {
                     retry_reveal_key: std::rc::Rc::default(),
                     retry_bounds: std::rc::Rc::new(std::cell::Cell::new(None)),
                     stream_abort_tx: None,
+                    host_approval: None,
+                    approval_session: Default::default(),
                     history: Default::default(),
                 });
             }

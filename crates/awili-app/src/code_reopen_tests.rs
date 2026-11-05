@@ -41,6 +41,8 @@ fn session(conv_id: Option<&str>, rows: usize, streaming: bool) -> CodeSession {
         retry_reveal_key: std::rc::Rc::default(),
         retry_bounds: std::rc::Rc::new(std::cell::Cell::new(None)),
         stream_abort_tx: None,
+                    host_approval: None,
+                    approval_session: Default::default(),
         history: Default::default(),
     };
     s.history.conv_id = conv_id.map(str::to_string);

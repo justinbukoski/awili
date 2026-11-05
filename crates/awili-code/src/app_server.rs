@@ -67,6 +67,8 @@ pub struct TurnSpec {
     /// The model chosen for this turn (`None` = Codex's own default).
     pub model: Option<String>,
     pub autonomy: Autonomy,
+    /// Native host can answer approval requests for this turn.
+    pub host_approvals: bool,
 }
 
 /// Where the opening handshake stands.
@@ -176,6 +178,10 @@ impl AppServerTurn {
         self.thread_id.as_deref()
     }
 
+    pub fn turn_id(&self) -> Option<&str> {
+        self.turn_id.as_deref()
+    }
+
     /// RC2-R2F9: ask a warm turn its question: the `turn/start` line to send
     /// (none while its thread is not open).
     pub fn ask(&mut self, prompt: String) -> Vec<String> {
@@ -195,7 +201,7 @@ impl AppServerTurn {
                 "threadId": self.thread_id.as_deref().unwrap_or_default(),
                 "input": awili_image_content::codex(&self.spec.prompt),
                 "approvalPolicy": approval_policy(self.spec.autonomy),
-                "approvalsReviewer": approvals_reviewer(self.spec.autonomy),
+                "approvalsReviewer": if self.spec.host_approvals { "user" } else { approvals_reviewer(self.spec.autonomy) },
                 "sandboxPolicy": match self.spec.autonomy {
                     Autonomy::AskFirst => json!({"type": "readOnly", "networkAccess": false}),
                     Autonomy::Autonomous => json!({"type": "dangerFullAccess"}),
@@ -352,7 +358,7 @@ impl AppServerTurn {
             "cwd": self.spec.cwd,
             "sandbox": sandbox_mode(self.spec.autonomy),
             "approvalPolicy": approval_policy(self.spec.autonomy),
-            "approvalsReviewer": approvals_reviewer(self.spec.autonomy),
+            "approvalsReviewer": if self.spec.host_approvals { "user" } else { approvals_reviewer(self.spec.autonomy) },
         });
         if let Some(m) = self.spec.model.as_deref().filter(|m| !m.trim().is_empty()) {
             params["model"] = json!(m);

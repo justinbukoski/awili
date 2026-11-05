@@ -182,12 +182,14 @@ impl crate::AwiliApp {
             .last()
             .and_then(|r| r.activity.last())
             .map(|a| a.to_string());
-        let label = strip_label(
+        let label = if session.host_approval.as_ref().is_some_and(|r| r.active()) {
+            "Waiting for approval".to_string()
+        } else { strip_label(
             session.engine,
             session.model.as_deref(),
             elapsed,
             last_activity.as_deref(),
-        );
+        ) };
         let stop = div()
             .id("code-stop")
             .debug_selector(|| "code-stop".into())

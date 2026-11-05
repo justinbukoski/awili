@@ -125,6 +125,30 @@ fn read_lines(path: &Path) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Repeated polling during an approval wait or warm-cache expiry must not
+/// reap the Unix server before group cleanup can use its reserved identity.
+#[cfg(unix)]
+#[test]
+fn server_exit_poll_preserves_unreaped_leader_identity() {
+    let mut child = Command::new("sh")
+        .args(["-c", "exit 0"])
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !server_has_exited(&mut child) {
+        assert!(Instant::now() < deadline, "fixture server did not exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(server_has_exited(&mut child));
+    let observation = crate::proc_compat::child_exit_observed(child.id());
+    // Always reap the fixture before asserting, including the failure path.
+    assert!(child.wait().unwrap().success());
+    assert!(
+        matches!(observation, Ok(true)),
+        "poll reaped leader: {observation:?}"
+    );
+}
+
 /// A completed CLI can exit while a background MCP-like child retains stderr.
 /// Completion must end that owned child and deliver Done without waiting for
 /// its sleep to finish, even while the caller keeps its Stop sender alive.
@@ -841,4 +865,57 @@ fn resumed_image_turn_emits_only_current_usage_and_real_image_input() {
         .as_str()
         .unwrap()
         .contains("base64"));
+}
+
+#[cfg(unix)]
+#[test]
+fn native_host_approvals_deliver_exact_replies_and_reuse_only_session_grants() {
+    use awili_providers::ApprovalChoice;
+    let dir = tempfile::tempdir().unwrap();
+    let approval = |id| say(&serde_json::json!({"id":id,"method":"mcpServer/elicitation/request","params":{"threadId":"thr-1","turnId":"turn-1","serverName":"desktop","mode":"form","message":"Capture the whole screen?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call","tool_name":"screenshot","tool_params":{"allScreens":true}}}}).to_string());
+    let after = format!("{}read -r l; printf '%s\\n' \"$l\" >> {}\n{}read -r l; printf '%s\\n' \"$l\" >> {}\n{}exit 0\n", approval(77), dir.path().join("stdin").display(), approval(78), dir.path().join("stdin").display(), say(r#"{"method":"turn/completed","params":{"threadId":"thr-1","turn":{"id":"turn-1","status":"completed"}}}"#));
+    let bin = fake_server(dir.path(), None, &after);
+    let p = provider(&bin, dir.path(), Autonomy::Autonomous, None, Arc::new(Mutex::new(None))).with_approval_session(Default::default());
+    let (_cancel, cancel_rx) = std::sync::mpsc::channel();
+    let rx = p.run(req("capture"), cancel_rx);
+    let mut approvals = 0;
+    while let Ok(event) = rx.recv_blocking() {
+        match event {
+            ProviderEvent::HostApproval(prompt) => { approvals += 1; assert!(prompt.detail.contains("allScreens")); assert!(prompt.answer(ApprovalChoice::Session)); }
+            ProviderEvent::Error(error) => panic!("{error}"),
+            ProviderEvent::Done => break,
+            _ => {}
+        }
+    }
+    assert_eq!(approvals, 1);
+    let sent = read_lines(&dir.path().join("stdin"));
+    assert_eq!(sent[2]["params"]["approvalsReviewer"], "user");
+    assert_eq!(sent[3]["params"]["approvalsReviewer"], "user");
+    for id in [77, 78] {
+        let reply = sent.iter().find(|v| v["id"] == id).unwrap();
+        assert_eq!(reply["result"]["action"], "accept");
+        assert!(reply["result"].get("_meta").is_none(), "no broader provider policy");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_pending_approval_expires_when_server_resolves_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let after = [
+        say(r#"{"id":77,"method":"item/commandExecution/requestApproval","params":{"threadId":"thr-1","turnId":"turn-1","command":"check","cwd":"/project"}}"#),
+        "sleep 0.1\n".into(),
+        say(r#"{"method":"serverRequest/resolved","params":{"threadId":"thr-1","requestId":77}}"#),
+        "read -r l\n".into(),
+        say(r#"{"method":"turn/completed","params":{"threadId":"thr-1","turn":{"id":"turn-1","status":"completed"}}}"#),
+        "exit 0\n".into(),
+    ].concat();
+    let bin = fake_server(dir.path(), None, &after);
+    let p = provider(&bin, dir.path(), Autonomy::Autonomous, None, Arc::new(Mutex::new(None))).with_approval_session(Default::default());
+    let (_cancel, cancel_rx) = std::sync::mpsc::channel();
+    let events = drain(p.run(req("check"), cancel_rx));
+    let prompt = events.iter().find_map(|e| if let ProviderEvent::HostApproval(p) = e { Some(p) } else { None }).unwrap();
+    assert!(!prompt.active());
+    assert!(!prompt.answer(awili_providers::ApprovalChoice::Session));
+    assert_eq!(events.last(), Some(&ProviderEvent::Done));
 }

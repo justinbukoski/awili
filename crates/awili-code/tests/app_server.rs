@@ -11,6 +11,7 @@ fn spec(resume: Option<&str>, autonomy: Autonomy) -> TurnSpec {
         resume_id: resume.map(str::to_string),
         model: Some("gpt-6.1-sol".into()),
         autonomy,
+        host_approvals: false,
     }
 }
 

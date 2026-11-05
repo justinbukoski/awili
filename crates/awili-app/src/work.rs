@@ -466,6 +466,8 @@ pub struct CodeSession {
     /// The Stop wire for the in-flight turn: sending KILLS the child process
     /// (not just stops reading it). `None` when idle.
     pub stream_abort_tx: Option<std::sync::mpsc::Sender<()>>,
+    pub(crate) host_approval: Option<awili_providers::HostApproval>,
+    pub(crate) approval_session: crate::codex_approval::Session,
     pub history: crate::code_history::CodeTabHistory,
 }
 
@@ -2582,6 +2584,8 @@ impl AwiliApp {
             retry_reveal_key: std::rc::Rc::default(),
             retry_bounds: std::rc::Rc::new(std::cell::Cell::new(None)),
             stream_abort_tx: None,
+            host_approval: None,
+            approval_session: Default::default(),
             history: Default::default(),
         });
         self.work.code_active = self.work.code_tabs.len() - 1;
@@ -2940,6 +2944,7 @@ impl AwiliApp {
                     })
                     .children(transcript),
             )
+            .children(self.code_host_approval_card(cx))
             .children(self.code_plan_gate_card(cx))
             // M2e: the running strip (what runs, elapsed, Stop).
             .children(self.code_run_strip(cx))
@@ -3319,6 +3324,7 @@ impl AwiliApp {
             engine_cfg.request_timeout,
             Some(engine_cfg.api_key.clone()),
         )
+        .with_max_output_tokens(cfg.resolved_max_output_tokens())
         .with_preflight(Self::transport_preflight(
             &gate_cfg,
             crate::strip::transport_cache_age(),
@@ -5618,6 +5624,7 @@ impl AwiliApp {
             let mut provider_done = false;
             while let Ok(ev) = rx.recv().await {
                 match ev {
+                    awili_providers::ProviderEvent::HostApproval(request) => { request.answer(awili_providers::ApprovalChoice::Deny); }
                     awili_providers::ProviderEvent::Token(t) => {
                         this.update(cx, |app, cx| {
                             if app.work.run_seq == run_id {

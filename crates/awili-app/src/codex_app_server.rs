@@ -235,9 +235,10 @@ fn start_server(turn: &Turn<'_>) -> Option<Server> {
         return None;
     };
     let stderr_buf = Arc::new(Mutex::new(String::new()));
-    let stderr_handle = child.stderr.take().map(|err| {
-        crate::code_provider::spawn_stderr_reader(err, Arc::clone(&stderr_buf))
-    });
+    let stderr_handle = child
+        .stderr
+        .take()
+        .map(|err| crate::code_provider::spawn_stderr_reader(err, Arc::clone(&stderr_buf)));
     // Lines arrive on a channel so the handshake can time out.
     let (line_tx, lines) = std::sync::mpsc::channel::<String>();
     std::thread::spawn(move || {
@@ -260,10 +261,26 @@ fn start_server(turn: &Turn<'_>) -> Option<Server> {
     })
 }
 
+/// Poll without releasing the Unix leader's pid reservation. Approval polling
+/// must leave reaping to the synchronized group-cleanup path.
+fn server_has_exited(child: &mut Child) -> bool {
+    #[cfg(unix)]
+    {
+        crate::proc_compat::child_has_exited(child.id())
+    }
+    #[cfg(windows)]
+    {
+        child.try_wait().ok().flatten().is_some()
+    }
+}
+
 /// End every ready server that has waited too long or has gone.
 fn expire_warm(pool: &mut Vec<Warm>) {
     let mut keep = Vec::with_capacity(pool.len());
     for mut w in pool.drain(..) {
+        #[cfg(unix)]
+        let alive = !server_has_exited(&mut w.server.child);
+        #[cfg(windows)]
         let alive = matches!(w.server.child.try_wait(), Ok(None));
         if alive && w.born.elapsed() < w.ttl {
             keep.push(w);
@@ -428,6 +445,7 @@ pub(crate) fn run_turn(
     tx: &async_channel::Sender<ProviderEvent>,
     session_slot: &crate::code_provider::SessionSlot,
     termination_observed: &Option<Arc<AtomicBool>>,
+    approval_session: crate::codex_approval::Session,
 ) -> Result<Vec<ProviderEvent>, Receiver<()>> {
     // RC2-R2F10: a server made ready for this launch takes the question at
     // once, on the thread it already opened.
@@ -445,6 +463,9 @@ pub(crate) fn run_turn(
                     tx,
                     session_slot,
                     termination_observed,
+                    approval_session,
+                    turn.spec.host_approvals
+                        && turn.spec.autonomy == awili_code::Autonomy::Autonomous,
                 ));
             }
             warm.server.abandon();
@@ -454,6 +475,8 @@ pub(crate) fn run_turn(
         // The exec path spawns the same binary and reports why it cannot.
         return Err(cancel_rx);
     };
+    let allow_approvals =
+        turn.spec.host_approvals && turn.spec.autonomy == awili_code::Autonomy::Autonomous;
     let mut protocol = AppServerTurn::new(turn.spec);
 
     // The handshake: `initialize` answered, or this Codex has no app server.
@@ -497,12 +520,15 @@ pub(crate) fn run_turn(
         tx,
         session_slot,
         termination_observed,
+        approval_session,
+        allow_approvals,
     ))
 }
 
 /// The turn runs on `server` (its handshake done): streamed events out on
 /// `tx`, the terminal ones returned. Stop kills the group, as on the exec
 /// path.
+#[allow(clippy::too_many_arguments)] // Keep process, cancellation and approval authority explicit.
 fn drive(
     mut server: Server,
     mut protocol: AppServerTurn,
@@ -510,6 +536,8 @@ fn drive(
     tx: &async_channel::Sender<ProviderEvent>,
     session_slot: &crate::code_provider::SessionSlot,
     termination_observed: &Option<Arc<AtomicBool>>,
+    approval_session: crate::codex_approval::Session,
+    allow_approvals: bool,
 ) -> Vec<ProviderEvent> {
     let mut emitted_error = false;
     let forward = |events: Vec<CodeEvent>, emitted_error: &mut bool| -> bool {
@@ -545,9 +573,30 @@ fn drive(
             crate::code_provider::kill_process_group(pgid);
         }
     });
+    let mut deferred = std::collections::VecDeque::new();
     while !protocol.finished() {
         // A killed server (Stop) ends its stdout: the loop ends with it.
-        let Ok(line) = server.lines.recv() else { break };
+        let Some(line) = deferred.pop_front().or_else(|| server.lines.recv().ok()) else {
+            break;
+        };
+        if allow_approvals {
+            if let Some(request) = crate::codex_approval::Request::parse(
+                &line,
+                protocol.thread_id(),
+                protocol.turn_id(),
+            ) {
+                let mut cancelled = false;
+                let reply = crate::codex_approval::resolve(&request, &approval_session, tx, || {
+                    while let Ok(line) = server.lines.try_recv() {
+                        cancelled |= request.cancelled_by(&line);
+                        deferred.push_back(line);
+                    }
+                    cancelled || server_has_exited(&mut server.child)
+                });
+                send_lines(&mut server.stdin, &[reply]);
+                continue;
+            }
+        }
         let step = protocol.on_line(&line);
         send_lines(&mut server.stdin, &step.send);
         if !forward(step.events, &mut emitted_error) {

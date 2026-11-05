@@ -776,6 +776,9 @@ pub struct EngineConfig {
     /// never cut off while it is alive.
     #[serde(default = "default_engine_request_timeout_s")]
     pub request_timeout_s: u64,
+    /// Maximum generated tokens per round, including reasoning and tool calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
 }
 
 // Custom `Debug` so a debug-logged config never leaks the engine `api_key`
@@ -792,6 +795,7 @@ impl std::fmt::Debug for EngineConfig {
             .field("dialect", &self.dialect)
             .field("window_tokens", &self.window_tokens)
             .field("request_timeout_s", &self.request_timeout_s)
+            .field("max_output_tokens", &self.max_output_tokens)
             .finish()
     }
 }
@@ -822,11 +826,17 @@ impl Default for EngineConfig {
             dialect: default_engine_dialect(),
             window_tokens: default_engine_window_tokens(),
             request_timeout_s: default_engine_request_timeout_s(),
+            max_output_tokens: None,
         }
     }
 }
 
 impl EngineConfig {
+    /// A saved per-model limit, or a generous default that fits older small windows.
+    pub fn resolved_max_output_tokens(&self) -> u64 {
+        self.max_output_tokens.unwrap_or_else(|| 8192.min((self.window_tokens.saturating_sub(512) / 2).max(1)))
+    }
+
     /// The in-app endpoint is filled in: `base_url` and `model` are both
     /// non-blank.
     pub fn is_configured(&self) -> bool {
@@ -889,6 +899,9 @@ pub struct ExtraEngineConfig {
     pub window_tokens: u64,
     #[serde(default = "default_engine_request_timeout_s")]
     pub request_timeout_s: u64,
+    /// Maximum generated tokens per round, including reasoning and tool calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
 }
 
 // Redacting `Debug`, as for [`EngineConfig`]: the `api_key` is never logged.
@@ -903,6 +916,7 @@ impl std::fmt::Debug for ExtraEngineConfig {
             .field("dialect", &self.dialect)
             .field("window_tokens", &self.window_tokens)
             .field("request_timeout_s", &self.request_timeout_s)
+            .field("max_output_tokens", &self.max_output_tokens)
             .finish()
     }
 }
@@ -920,6 +934,7 @@ impl ExtraEngineConfig {
             dialect: self.dialect.clone(),
             window_tokens: self.window_tokens,
             request_timeout_s: self.request_timeout_s,
+            max_output_tokens: self.max_output_tokens,
         }
     }
 }
@@ -2010,6 +2025,16 @@ impl Config {
     /// Load-time validation of `[[engines]]`: every id valid and unique. A bad
     /// list fails the load naming the id; nothing is dropped or merged.
     fn validate_engines(&self) -> Result<(), ConfigError> {
+        for (id, engine) in std::iter::once(("engine".to_string(), self.engine.clone()))
+            .chain(self.engines.iter().map(|e| (e.id.clone(), e.to_engine_config())))
+        {
+            if engine.max_output_tokens.is_some_and(|tokens| tokens == 0 || tokens.saturating_add(512) > engine.window_tokens) {
+                return Err(ConfigError::InvalidEngine {
+                    id,
+                    message: "max_output_tokens must be positive and leave at least 512 tokens of context for input".into(),
+                });
+            }
+        }
         let mut seen = std::collections::BTreeSet::new();
         for e in &self.engines {
             if !is_valid_engine_id(&e.id) {
