@@ -4490,10 +4490,22 @@ fn finish<S: AppendOnlyLog>(
     closed: &mut bool,
 ) -> Result<TurnReport, SeamError> {
     let failed = trace.iter().any(|e| matches!(e, AgentEvent::TurnFailed(_)));
-    let outcome = if failed { "failed" } else { "completed" };
+    // Reasoning shares the output budget. Exhausting it before any answer
+    // must surface as a recoverable failure, not a successful empty reply.
+    let empty_at_limit = state.text().trim().is_empty()
+        && trace.iter().any(|e| matches!(e, AgentEvent::TurnCompleted {
+            stop: awili_engine::events::StopKind::Length, ..
+        }));
+    let outcome = if failed || empty_at_limit { "failed" } else { "completed" };
     let report = close_and_report(
         log, turn_id, outcome, trace, requests, &state, rounds, closed,
     )?;
+    if empty_at_limit && !failed {
+        return Err(SeamError::TurnFailed {
+            reason: "The model reached its output-token limit before producing an answer. Reduce the model's reasoning budget or increase its output limit, then retry.".into(),
+            report: Box::new(report),
+        });
+    }
     if failed {
         let reason = report
             .events
