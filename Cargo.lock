@@ -701,7 +701,7 @@ dependencies = [
 
 [[package]]
 name = "awili-app"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "alacritty_terminal",
  "async-channel 2.5.0",
@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "awili-attest"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "awili-attest-types",
  "awili-config",
@@ -780,7 +780,7 @@ dependencies = [
 
 [[package]]
 name = "awili-attest-types"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "awili-engine",
  "thiserror 2.0.18",
@@ -789,7 +789,7 @@ dependencies = [
 
 [[package]]
 name = "awili-builtins"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "awili-engine",
  "awili-engine-log",
@@ -801,7 +801,7 @@ dependencies = [
 
 [[package]]
 name = "awili-ccd"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "reqwest",
  "serde",
@@ -811,7 +811,7 @@ dependencies = [
 
 [[package]]
 name = "awili-code"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "awili-image-content",
  "awili-providers",
@@ -821,7 +821,7 @@ dependencies = [
 
 [[package]]
 name = "awili-config"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "awili-winacl",
  "dirs",
@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "awili-connectors"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "reqwest",
  "serde",
@@ -843,18 +843,18 @@ dependencies = [
 
 [[package]]
 name = "awili-core"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "uuid",
 ]
 
 [[package]]
 name = "awili-council"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 
 [[package]]
 name = "awili-design-lint"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "anyhow",
  "regex",
@@ -865,7 +865,7 @@ dependencies = [
 
 [[package]]
 name = "awili-dispatch"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "anyhow",
  "rustix 1.1.4",
@@ -878,7 +878,7 @@ dependencies = [
 
 [[package]]
 name = "awili-engine"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "awili-image-content",
  "serde",
@@ -889,7 +889,7 @@ dependencies = [
 
 [[package]]
 name = "awili-engine-authz"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "awili-attest-types",
  "awili-engine",
@@ -901,7 +901,7 @@ dependencies = [
 
 [[package]]
 name = "awili-engine-log"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "awili-attest-types",
  "awili-engine",
@@ -915,7 +915,7 @@ dependencies = [
 
 [[package]]
 name = "awili-engine-sandbox"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "awili-engine",
  "awili-engine-log",
@@ -926,7 +926,7 @@ dependencies = [
 
 [[package]]
 name = "awili-engine-worker"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "async-channel 2.5.0",
  "awili-engine",
@@ -942,7 +942,7 @@ dependencies = [
 
 [[package]]
 name = "awili-feed"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "awili-config",
  "dirs",
@@ -955,7 +955,7 @@ dependencies = [
 
 [[package]]
 name = "awili-gateway"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "anyhow",
  "awili-work",
@@ -969,7 +969,7 @@ dependencies = [
 
 [[package]]
 name = "awili-image-content"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "base64",
  "image",
@@ -978,14 +978,14 @@ dependencies = [
 
 [[package]]
 name = "awili-mcp-testserver"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "awili-memory"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "reqwest",
  "serde",
@@ -994,7 +994,7 @@ dependencies = [
 
 [[package]]
 name = "awili-persist"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "awili-config",
  "awili-winacl",
@@ -1007,7 +1007,7 @@ dependencies = [
 
 [[package]]
 name = "awili-providers"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "async-channel 2.5.0",
  "awili-image-content",
@@ -1020,7 +1020,7 @@ dependencies = [
 
 [[package]]
 name = "awili-seam"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "async-channel 2.5.0",
  "awili-attest-types",
@@ -1040,7 +1040,7 @@ dependencies = [
 
 [[package]]
 name = "awili-selftest"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1054,7 +1054,7 @@ dependencies = [
 
 [[package]]
 name = "awili-skills"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "tempfile",
  "thiserror 2.0.18",
@@ -1063,7 +1063,7 @@ dependencies = [
 
 [[package]]
 name = "awili-tools"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "async-channel 2.5.0",
  "awili-attest-types",
@@ -1076,7 +1076,7 @@ dependencies = [
 
 [[package]]
 name = "awili-voice"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
@@ -1097,14 +1097,14 @@ dependencies = [
 
 [[package]]
 name = "awili-winacl"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "awili-work"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 dependencies = [
  "async-channel 2.5.0",
  "serde",

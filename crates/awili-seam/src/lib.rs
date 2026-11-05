@@ -126,6 +126,12 @@ pub fn input_budget_tokens(window_tokens: u64) -> u64 {
         .saturating_sub(SAFETY_MARGIN_TOKENS)
 }
 
+/// Equivalent window for projection helpers that reserve the legacy reply room.
+/// Final request assembly uses the real window and configured output reservation.
+fn projection_window_tokens(window_tokens: u64, output_tokens: u64) -> u64 {
+    window_tokens.saturating_sub(output_tokens).saturating_add(REPLY_ROOM_TOKENS)
+}
+
 /// The reply's room in every request (`max_tokens`).
 const REPLY_ROOM_TOKENS: u64 = 2048;
 /// The seam profile's safety margin.
@@ -613,6 +619,8 @@ pub fn verify_bound_identity(
 /// (SSE text or bare JSON error — `decode_stream` handles both). Tests
 /// inject scripted bodies; the binary speaks HTTP.
 pub trait Transport {
+    fn max_output_tokens(&self) -> u64 { REPLY_ROOM_TOKENS }
+
     fn stream(&mut self, request_body: &str) -> Result<String, SeamError>;
 
     /// RC2-GEMMA3 (R7-speed): [`stream`](Self::stream), with each line of
@@ -2511,23 +2519,25 @@ pub fn warm_prompt_cache(
     history: &ContextHistory,
     host_io: &mut dyn TurnHost,
 ) -> Result<bool, SeamError> {
+    let projection_window = projection_window_tokens(window_tokens, transport.max_output_tokens());
     let mut registry = tool_registry(extra_tools)?;
     let mut probe = history.clone();
     probe.push_user(WARM_USER);
-    let fallback = needs_catalog_fallback(&registry, extra_tools, model, window_tokens, &probe)?;
+    let fallback = needs_catalog_fallback(&registry, extra_tools, model, projection_window, &probe)?;
     let tools = if fallback {
         awili_tools::catalog::install(&mut registry)
             .map_err(|e| SeamError::Harness(format!("catalog install: {e:?}")))?;
-        let turn = catalog_with_local_shell(&registry, &RootsAcceptance::default(), &probe, model, window_tokens)?;
-        catalog_advertised_tools(&registry, &turn.selected, window_tokens, model)?
+        let turn = catalog_with_local_shell(&registry, &RootsAcceptance::default(), &probe, model, projection_window)?;
+        catalog_advertised_tools(&registry, &turn.selected, projection_window, model)?
     } else {
-        advertised_tools(&registry, extra_tools, window_tokens, history, model)?
+        advertised_tools(&registry, extra_tools, projection_window, history, model)?
     };
-    let profile = seam_profile(
+    let mut profile = seam_profile(
         model,
         window_tokens,
         &serde_json::Value::Array(tools.clone()).to_string(),
     );
+    profile.reserved_output_tokens = transport.max_output_tokens();
     let wire = if fallback {
         let aliases = registry.aliases().into_values().collect::<Vec<_>>();
         wire_names::WireNames::new(aliases.iter().map(String::as_str))
@@ -2603,6 +2613,7 @@ pub type Preflight = std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync
 /// the product worker and the acceptance runner speak the same wire path.
 pub struct HttpTransport {
     url: String,
+    max_output_tokens: u64,
     /// Called before EVERY request this transport sends (first requests,
     /// tool-loop steps, retries, resumes after an approval): `Err(text)`
     /// refuses the request, which is then never sent and fails the turn with
@@ -2665,6 +2676,7 @@ impl HttpTransport {
     ) -> Self {
         Self {
             url: chat_completions_url(base_url),
+            max_output_tokens: REPLY_ROOM_TOKENS,
             api_key,
             preflight: None,
             client: reqwest::blocking::Client::builder()
@@ -2673,6 +2685,12 @@ impl HttpTransport {
                 .build()
                 .expect("reqwest client build"),
         }
+    }
+
+    /// Use the model's saved generation budget for each answer/tool round.
+    pub fn with_max_output_tokens(mut self, tokens: u64) -> Self {
+        self.max_output_tokens = tokens;
+        self
     }
 
     /// Gate every request through `preflight` (see the field).
@@ -2702,6 +2720,7 @@ impl HttpTransport {
 }
 
 impl Transport for HttpTransport {
+    fn max_output_tokens(&self) -> u64 { self.max_output_tokens }
     fn stream(&mut self, request_body: &str) -> Result<String, SeamError> {
         self.stream_lines(request_body, &mut |_| true)
     }
@@ -3280,6 +3299,7 @@ fn run_turn_inner<S1>(
 where
     S1: AppendOnlyLog,
 {
+    let projection_window = projection_window_tokens(window_tokens, transport.max_output_tokens());
     let session_id = log.session_id().to_string();
     let mut registry = tool_registry(extra_tools)?;
     // Unit 4 item 6 note: a non-builtin tool registered into a composition
@@ -3302,11 +3322,11 @@ where
     // The full-schema projection is left untouched when it fits. Otherwise
     // the registry remains complete while each request advertises the
     // turn-local selected projection.
-    let fallback = needs_catalog_fallback(&registry, extra_tools, model, window_tokens, history)?;
+    let fallback = needs_catalog_fallback(&registry, extra_tools, model, projection_window, history)?;
     let mut catalog = if fallback {
         awili_tools::catalog::install(&mut registry)
             .map_err(|e| SeamError::Harness(format!("catalog install: {e:?}")))?;
-        Some(catalog_with_local_shell(&registry, roots, history, model, window_tokens)?)
+        Some(catalog_with_local_shell(&registry, roots, history, model, projection_window)?)
     } else {
         None
     };
@@ -3326,15 +3346,16 @@ where
         }
         let tools = if let Some(turn) = catalog.as_ref() {
             validate_catalog_turn(&registry, roots, turn)?;
-            catalog_advertised_tools(&registry, &turn.selected, window_tokens, model)?
+            catalog_advertised_tools(&registry, &turn.selected, projection_window, model)?
         } else {
-            advertised_tools(&registry, extra_tools, window_tokens, history, model)?
+            advertised_tools(&registry, extra_tools, projection_window, history, model)?
         };
-        let profile = seam_profile(
+        let mut profile = seam_profile(
             model,
             window_tokens,
             &serde_json::Value::Array(tools.clone()).to_string(),
         );
+        profile.reserved_output_tokens = transport.max_output_tokens();
         // In catalog mode all historical aliases keep their allocation even
         // while only the selected schemas are projected in this request.
         let wire = if catalog.is_some() {
@@ -3370,7 +3391,7 @@ where
                     "model": model,
                     "stream": true,
                     "stream_options": {"include_usage": true},
-                    "max_tokens": 2048,
+                    "max_tokens": transport.max_output_tokens(),
                     "tool_choice": "auto",
                     "tools": tools,
                     "messages": messages,
@@ -3383,7 +3404,7 @@ where
                     "model": model,
                     "stream": true,
                     "stream_options": {"include_usage": true},
-                    "max_tokens": 2048,
+                    "max_tokens": transport.max_output_tokens(),
                     "tools": tools,
                     "messages": messages,
                 })
@@ -3707,7 +3728,7 @@ where
                                         history,
                                         &assistant_text,
                                         &calls,
-                                        window_tokens,
+                                        projection_window,
                                         model,
                                         &wire,
                                     )

@@ -53,6 +53,7 @@ fn hosta(base: &str, model: &str) -> ExtraEngineConfig {
         dialect: "chat-completions".into(),
         window_tokens: 262_144,
         request_timeout_s: 30,
+        max_output_tokens: None,
     }
 }
 

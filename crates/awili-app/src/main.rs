@@ -6277,6 +6277,15 @@ impl AwiliApp {
     /// from [`AwiliApp::apply_runtime_config`] so a live-refresh test can
     /// assert it against a real [`WorkState`].
     fn refresh_work_endpoints(work: &mut WorkState, cfg: &Config) {
+        if (work.engine != cfg.engine || work.extra_engines != cfg.engines)
+            && matches!(work.worker_identity, Some(crate::work_run_identity::WorkRunIdentity::OwnedEngine { .. }))
+        {
+            if work.running || work.gateway_stop_pending {
+                work.retire_after_run = true;
+            } else {
+                work::retire_in_app_worker(work);
+            }
+        }
         // L1e2a-FIX1: a new local endpoint is unchecked; the old result and
         // any probe in flight no longer count.
         if work.engine.base_url != cfg.engine.base_url {

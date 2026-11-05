@@ -3319,6 +3319,7 @@ impl AwiliApp {
             engine_cfg.request_timeout,
             Some(engine_cfg.api_key.clone()),
         )
+        .with_max_output_tokens(cfg.resolved_max_output_tokens())
         .with_preflight(Self::transport_preflight(
             &gate_cfg,
             crate::strip::transport_cache_age(),

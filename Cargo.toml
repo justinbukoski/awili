@@ -39,7 +39,7 @@ members = [
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/justinbukoski/awili"
 edition = "2021"
-version = "0.3.0-rc.3"
+version = "0.3.0-rc.5"
 
 # Shared dependency versions. The HTTP/serde/async stack is pinned to match the
 # versions gpui's own workspace resolves (see the zed-gpui-fork Cargo.toml) so
