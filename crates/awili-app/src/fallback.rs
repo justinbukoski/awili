@@ -122,7 +122,8 @@ mod tests {
             let mut error = None;
             while let Some(ev) = stream.next().await {
                 match ev {
-                    ProviderEvent::Activity(_)
+                    ProviderEvent::HostApproval(_)
+                    | ProviderEvent::Activity(_)
                     | ProviderEvent::ToolStarted(_)
                     | ProviderEvent::ToolAttemptFailed => {}
                     ProviderEvent::Token(t) => text.push_str(&t),

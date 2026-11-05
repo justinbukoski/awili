@@ -7225,6 +7225,7 @@ fn rc3_s1a_refused_council_delete_keeps_the_council(cx: &mut gpui::TestAppContex
         app.persist = Some(crate::persistence::Persistence {
             tx,
             failed: Default::default(),
+            recovery: Default::default(),
         });
         app.set_mode(Mode::Council, cx);
         let id = app.sidebar.active_id().to_string();
@@ -7276,6 +7277,7 @@ fn rc3_s1a_council_delete_persists_and_lands_on_one_new_council(cx: &mut gpui::T
         app.persist = Some(crate::persistence::Persistence {
             tx,
             failed: Default::default(),
+            recovery: Default::default(),
         });
         app.set_mode(Mode::Council, cx);
     });
@@ -7382,14 +7384,20 @@ fn a_council_member_on_a_non_resident_lemonade_model_is_sent_nothing(
     window.simulate_resize(size(px(1400.), px(900.)));
     let _conv = ask_two(window, &view, &a, &b, "Anyone loaded?");
     settle(window, &view, "both cards ended", |app| {
-        round_one(app).is_some_and(|r| {
-            r.turns.len() == 2 && r.turns.iter().all(|t| !t.status.is_running())
-        })
+        round_one(app)
+            .is_some_and(|r| r.turns.len() == 2 && r.turns.iter().all(|t| !t.status.is_running()))
     });
     for line in seen_a.lock().unwrap().iter() {
-        assert_eq!(line, "GET /api/v1/health HTTP/1.1", "only the health read: {line}");
+        assert_eq!(
+            line, "GET /api/v1/health HTTP/1.1",
+            "only the health read: {line}"
+        );
     }
-    assert_eq!(seen_b.lock().unwrap().len(), 1, "the other member was asked");
+    assert_eq!(
+        seen_b.lock().unwrap().len(),
+        1,
+        "the other member was asked"
+    );
     view.read_with(window, |app, _| {
         let r = round_one(app).unwrap();
         let gemma = r
@@ -7399,5 +7407,40 @@ fn a_council_member_on_a_non_resident_lemonade_model_is_sent_nothing(
             .expect("the Lemonade member's card");
         let said = format!("{} {:?}", gemma.text, gemma.status);
         assert!(said.contains("isn\u{2019}t loaded"), "{said}");
+    });
+}
+
+#[gpui::test]
+fn refused_ambiguous_queued_message_stays_with_hidden_council(cx: &mut gpui::TestAppContext) {
+    if isolated("council_tests::refused_ambiguous_queued_message_stays_with_hidden_council")
+        .is_none()
+    {
+        return;
+    }
+    cx.executor().allow_parking();
+    let (view, window) = cx.add_window_view(|_, cx| AwiliApp::new(cx));
+    seated(
+        window,
+        &view,
+        &[
+            ("agent:claude:sonnet", "Claude Sonnet"),
+            ("agent:claude:opus", "Claude Opus"),
+        ],
+    );
+    view.update(window, |app, cx| {
+        let owner = app.sidebar.active_id().to_string();
+        app.councils
+            .get_mut(&owner)
+            .unwrap()
+            .queued
+            .push_back("@Claude please explain".into());
+        app.set_mode(Mode::Work, cx);
+        app.council_after_seat(&owner, cx);
+        let page = &app.councils[&owner];
+        assert_eq!(
+            page.queued.front().map(String::as_str),
+            Some("@Claude please explain")
+        );
+        assert!(page.note.is_some());
     });
 }

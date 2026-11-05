@@ -209,7 +209,14 @@ fn read_doc_status(path: &Path, cap: usize, fence: Option<&Path>) -> DocRead {
     if fence.is_some_and(|f| !real.starts_with(f)) {
         return DocRead::Skipped(DocStatus::OutsideFolder);
     }
-    let Ok(file) = std::fs::File::open(&real) else {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let Ok(file) = options.open(&real) else {
         return DocRead::Skipped(DocStatus::Unreadable);
     };
     let Ok(meta) = file.metadata() else {

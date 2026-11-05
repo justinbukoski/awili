@@ -1543,6 +1543,25 @@ pub(crate) mod tests {
     pub(crate) fn testserver_bin() -> PathBuf {
         unimplemented!("TODO(windows-phase1): this test fixture needs a Windows twin")
     }
+    /// A direct test-binary invocation can start outside the workspace. The
+    /// fixture's nested Cargo build must still find the workspace manifest.
+    #[cfg(unix)]
+    #[test]
+    fn testserver_build_works_from_foreign_cwd() {
+        const CHILD: &str = "AWILI_TESTSERVER_FOREIGN_CWD_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            assert!(testserver_bin().is_file());
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .current_dir(dir.path())
+            .env(CHILD, "1")
+            .args(["--exact", "mcp_runtime::tests::testserver_build_works_from_foreign_cwd", "--nocapture"])
+            .output().unwrap();
+        assert!(output.status.success(), "child failed:\n{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    }
+
     #[cfg(unix)]
     /// The testserver binary for this test process: built once, then handed
     /// out from a path nothing ever rewrites.
@@ -1571,6 +1590,7 @@ pub(crate) mod tests {
             let lock = std::fs::File::create(dir.join("build.lock")).expect("testserver lock file");
             lock.lock().expect("testserver build lock");
             let status = std::process::Command::new(env!("CARGO"))
+                .current_dir(&root)
                 .args([
                     "build",
                     "--locked",

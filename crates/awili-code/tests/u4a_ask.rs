@@ -21,12 +21,14 @@ fn u4a_claude_plan_step_is_plan_mode_with_every_tool() {
             "--include-partial-messages",
             "--permission-mode",
             "plan",
-            "--permission-prompts",
-            "none",
             "fix the bug",
         ]
     );
-    for gone in ["--strict-mcp-config", "--dangerously-skip-permissions"] {
+    for gone in [
+        "--strict-mcp-config",
+        "--dangerously-skip-permissions",
+        "--permission-prompts",
+    ] {
         assert!(!args.iter().any(|a| a == gone), "{gone}: {args:?}");
     }
     assert!(!args.iter().any(|a| a.starts_with("--tools")), "{args:?}");

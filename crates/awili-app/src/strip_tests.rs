@@ -292,6 +292,7 @@ fn local() -> Where {
         host: "Hosta".into(),
         addr: "hosta.internal:13305".into(),
         model: "Qwen3 Coder Next".into(),
+        model_id: "Qwen3 Coder Next".into(),
     }
 }
 
@@ -976,4 +977,21 @@ fn a_provider_name_that_resolves_to_the_lan_is_guarded_a_public_one_is_not() {
     // Names that are guarded by their shape need no lookup.
     assert!(provider_host_guarded("http://hosta.internal", t));
     assert!(provider_host_guarded("http://10.77.1.2", t));
+}
+
+
+#[test]
+fn friendly_local_label_does_not_change_residency_identity() {
+    let mut input = base(Where::Local {
+        host: "Z13".into(),
+        addr: "127.0.0.1:13305".into(),
+        model: "Qwen 3.5 4B · Z13 offline".into(),
+        model_id: "Qwen3.5-4B-MTP-GGUF".into(),
+    });
+    input.lemonade = true;
+    input.resident = parse_health(r#"{"status":"ok","all_models_loaded":[{"model_name":"Qwen3.5-4B-MTP-GGUF"}]}"#);
+    assert_eq!(derive(&input).state, State::Ready);
+    // A genuinely different resident model still produces the unloaded state.
+    input.resident = parse_health(r#"{"status":"ok","all_models_loaded":["another-model"]}"#);
+    assert_eq!(derive(&input).state, State::NotLoaded);
 }

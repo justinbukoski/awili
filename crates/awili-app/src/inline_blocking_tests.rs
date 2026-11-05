@@ -25,7 +25,8 @@ fn setup(cx: &mut gpui::TestAppContext) -> (gpui::Entity<AwiliApp>, &mut gpui::V
         app.work.running = true;
         app.work.executor = crate::work::WorkExecutor::InApp;
         app.work.worker_identity = Some(crate::work_run_identity::WorkRunIdentity::OwnedEngine {
-            model: "fixture".into(), engine_id: None,
+            model: "fixture".into(),
+            engine_id: None,
         });
         let active = app.views.get_mut(app.sidebar.active_id()).unwrap();
         let idx = active.convo.len();
@@ -484,7 +485,7 @@ fn inline_blocking_completed_reply_has_no_blank_scroll_tail(cx: &mut gpui::TestA
         app.work_stream_token("AWILI_RC_SHELL_OK", cx);
         app.work.running = false;
         app.work_finish_stream(cx);
-        app.views.get_mut(app.sidebar.active_id()).unwrap().rows[1].footer = Some("In-app · Gemma 4 26B (Studio) · 1m 06s · 27,683 tokens on this Mac · ran mac-shell.run_command (Awili can't tell whether it changed any files)".into());
+        app.views.get_mut(app.sidebar.active_id()).unwrap().rows[1].footer = Some("Codex · gpt-6.1-sol · 1m 06s · 13,023 tokens · this turn: 12,345 input + 678 output · 10,000 cached (included in input) · no files changed".into());
         crate::transcript_keys::pin_to_bottom(&app.active_view().unwrap().scroll);
         cx.notify();
     });
@@ -583,11 +584,31 @@ fn inline_blocking_completed_reply_has_no_blank_scroll_tail(cx: &mut gpui::TestA
                 let drawn =
                     crate::run_footer::DRAWN_FOOTERS.with(|d| d.borrow().last().unwrap().clone());
                 assert_eq!(
-                    drawn.text(),
-                    footer.as_ref(),
+                    drawn
+                        .iter()
+                        .map(|layout| layout.text())
+                        .collect::<Vec<_>>()
+                        .join(" · "),
+                    footer
+                        .split(" · ")
+                        .flat_map(crate::run_footer::compact_metric)
+                        .collect::<Vec<_>>()
+                        .join(" · "),
                     "complete footer, including folder suffix"
                 );
-                let bounds = drawn.bounds();
+                let actual_metrics: Vec<_> = drawn.iter().map(|layout| layout.text()).collect();
+                for expected in ["In 12,345", "Out 678", "Cached 10,000"] {
+                    assert!(
+                        actual_metrics.iter().any(|metric| metric == expected),
+                        "{actual_metrics:?}"
+                    );
+                }
+                assert!(!actual_metrics.iter().any(|metric| metric == ")"));
+                let bounds = drawn
+                    .iter()
+                    .map(|layout| layout.bounds())
+                    .reduce(|a, b| a.union(&b))
+                    .unwrap();
                 assert!(
                     bounds.left() >= reply.left() && bounds.right() <= reply.right() + px(1.),
                     "footer must fit horizontally: {bounds:?} / {reply:?}"
@@ -602,4 +623,36 @@ fn inline_blocking_completed_reply_has_no_blank_scroll_tail(cx: &mut gpui::TestA
         }
     }
     crate::theme::set_ui_scale(1.);
+}
+
+#[gpui::test]
+fn abandoned_credential_is_cleared_before_a_new_request(cx: &mut gpui::TestAppContext) {
+    if !isolated("inline_blocking_tests::abandoned_credential_is_cleared_before_a_new_request") {
+        return;
+    }
+    let (view, window) = setup(cx);
+    view.update(window, |app, cx| {
+        app.apply_work_update(
+            crate::work::WorkUpdate::SudoRequest {
+                request_id: "request-a".into(),
+            },
+            cx,
+        );
+        app.credential_input
+            .update(cx, |c, cx| c.set_text("sentinel-abandoned", cx));
+        app.cancel_work_run(cx);
+        app.apply_work_update(
+            crate::work::WorkUpdate::SecretRequest {
+                request_id: "request-b".into(),
+                env_var: "FIXTURE".into(),
+                prompt: "fixture".into(),
+            },
+            cx,
+        );
+        assert!(app.credential_input.read(cx).text().is_empty());
+        assert_eq!(
+            app.work.panel.credential.as_ref().unwrap().request_id,
+            "request-b"
+        );
+    });
 }

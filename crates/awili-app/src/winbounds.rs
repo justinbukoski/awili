@@ -60,27 +60,83 @@ pub fn visible_on_any(displays: &[(f32, f32, f32, f32)], b: SavedBounds) -> bool
     })
 }
 
-/// Best-effort save; failures are ignored (a bounds write must never block
-/// quit). Deduped and written OFF the UI thread (Codex night-review
-/// SHOULD-5): move/resize streams dozens of notifications per second, and
-/// the GPUI path stays I/O-free.
-pub fn save(b: SavedBounds) {
-    use std::sync::Mutex;
-    static LAST: Mutex<Option<SavedBounds>> = Mutex::new(None);
-    if let Ok(mut last) = LAST.lock() {
-        if *last == Some(b) {
-            return;
-        }
-        *last = Some(b);
-    }
-    std::thread::spawn(move || {
-        if let Some(path) = default_path() {
-            if let Some(dir) = path.parent() {
-                let _ = awili_config::ensure_private_app_dir(dir);
+enum WriteCommand {
+    Save(PathBuf, SavedBounds),
+    Flush(std::sync::mpsc::Sender<()>),
+}
+
+fn writer() -> &'static std::sync::mpsc::Sender<WriteCommand> {
+    static WRITER: std::sync::OnceLock<std::sync::mpsc::Sender<WriteCommand>> =
+        std::sync::OnceLock::new();
+    WRITER.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut last = None;
+            let mut pending = None;
+            loop {
+                let cmd = match pending.take().or_else(|| rx.recv().ok()) {
+                    Some(cmd) => cmd,
+                    None => break,
+                };
+                match cmd {
+                    WriteCommand::Save(mut path, mut b) => {
+                        // Keep only the newest consecutive resize, but stop at
+                        // a flush barrier so it acknowledges the right writes.
+                        while let Ok(next) = rx.try_recv() {
+                            match next {
+                                WriteCommand::Save(new_path, newer) if new_path == path => {
+                                    path = new_path;
+                                    b = newer;
+                                }
+                                barrier => {
+                                    pending = Some(barrier);
+                                    break;
+                                }
+                            }
+                        }
+                        if last.as_ref() == Some(&(path.clone(), b)) {
+                            continue;
+                        }
+                        {
+                            if let Some(dir) = path.parent() {
+                                if awili_config::ensure_private_app_dir(dir).is_err() {
+                                    continue;
+                                }
+                            }
+                            let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
+                            if std::fs::write(&tmp, format(b))
+                                .and_then(|_| std::fs::rename(&tmp, &path))
+                                .is_ok()
+                            {
+                                last = Some((path, b));
+                            } else {
+                                let _ = std::fs::remove_file(tmp);
+                            }
+                        }
+                    }
+                    WriteCommand::Flush(reply) => {
+                        let _ = reply.send(());
+                    }
+                }
             }
-            let _ = std::fs::write(path, format(b));
-        }
-    });
+        });
+        tx
+    })
+}
+
+/// Queue ordered geometry writes away from the UI thread.
+pub fn save(b: SavedBounds) {
+    if let Some(path) = default_path() {
+        let _ = writer().send(WriteCommand::Save(path, b));
+    }
+}
+
+/// Wait for all previously queued bounds before shutdown.
+pub(crate) fn flush() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    if writer().send(WriteCommand::Flush(tx)).is_ok() {
+        let _ = rx.recv_timeout(std::time::Duration::from_secs(2));
+    }
 }
 
 /// Windows: what the window frame takes outside the client bounds GPUI
@@ -267,5 +323,41 @@ mod tests {
         };
         let f = fit_to_work_area(b, (0.0, 0.0, 10.0, 10.0));
         assert!(f.w >= 1.0 && f.h >= 1.0);
+    }
+}
+
+#[cfg(test)]
+mod ordered_writer_regression {
+    use super::*;
+
+    #[test]
+    fn flush_persists_latest_bounds_to_the_enqueued_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        let b1 = SavedBounds {
+            x: 0.,
+            y: 0.,
+            w: 800.,
+            h: 600.,
+        };
+        let b2 = SavedBounds {
+            x: 20.,
+            y: 30.,
+            w: 1000.,
+            h: 700.,
+        };
+        writer()
+            .send(WriteCommand::Save(first.clone(), b1))
+            .unwrap();
+        writer()
+            .send(WriteCommand::Save(first.clone(), b2))
+            .unwrap();
+        writer()
+            .send(WriteCommand::Save(second.clone(), b1))
+            .unwrap();
+        flush();
+        assert_eq!(parse(&std::fs::read_to_string(first).unwrap()), Some(b2));
+        assert_eq!(parse(&std::fs::read_to_string(second).unwrap()), Some(b1));
     }
 }

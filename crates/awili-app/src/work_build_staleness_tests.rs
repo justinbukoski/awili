@@ -337,6 +337,19 @@ fn terminal_initial_snapshot_skips_polling(cx: &mut gpui::TestAppContext) {
         rx
     });
     cx.run_until_parked();
+    assert!(
+        !runner.join("calls").exists(),
+        "runner waits for commit acknowledgement"
+    );
+    let reply = match rx.try_recv().expect("tracking row queued") {
+        PersistCmd::CommitBuildJob { row, reply } => {
+            assert_eq!(row.state, "submitting");
+            reply
+        }
+        _ => panic!("expected commit request"),
+    };
+    reply.send_blocking(Ok(())).unwrap();
+    cx.run_until_parked();
     // Well past the poll interval (and many polls' worth of it).
     for _ in 0..5 {
         cx.executor().advance_clock(POLL_INTERVAL * 2);
@@ -370,4 +383,225 @@ fn terminal_initial_snapshot_skips_polling(cx: &mut gpui::TestAppContext) {
     let lines = ledger(&home);
     assert_eq!(lines.len(), 1, "one ledger line");
     assert_eq!(lines[0].outcome, Outcome::Success);
+}
+
+#[gpui::test]
+fn rejected_tracking_commit_never_invokes_runner(cx: &mut gpui::TestAppContext) {
+    use crate::build_dispatch::{build_request, ResolvedBuild};
+    use crate::build_dispatch_tests::{fake_ssh, input, targets, SCRIPT_FIXTURE};
+    let Some(home) =
+        isolated("work::build_staleness_tests::rejected_tracking_commit_never_invokes_runner")
+    else {
+        return;
+    };
+    let _fixture = crate::exec_fixture::lock(&SCRIPT_FIXTURE);
+    let runner = home.join("runner-failed-commit");
+    std::fs::create_dir_all(&runner).unwrap();
+    let resolved = ResolvedBuild::resolve_with(&targets(), "stryx", fake_ssh(&runner, 0)).unwrap();
+    let request = build_request(&resolved, &input("turn-failed", "task".into())).unwrap();
+    let entity = cx.new(AwiliApp::new);
+    let rx = entity.update(cx, |app, cx| {
+        let rx = wire(app, &home);
+        app.work.run_seq += 1;
+        let run_id = app.work.run_seq;
+        app.work.running = true;
+        let key = LocalBuildHandle {
+            turn_id: request.turn_id.clone(),
+            request_id: request.request_id.clone(),
+            target_id: resolved.target_id.clone(),
+            revision: 0,
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        app.work.local_build = Some(key.clone());
+        app.drive_local_build(run_id, resolved, request, key, cx);
+        rx
+    });
+    cx.run_until_parked();
+    assert!(!runner.join("calls").exists());
+    match rx.try_recv().unwrap() {
+        PersistCmd::CommitBuildJob { reply, .. } => {
+            reply.send_blocking(Err("disk full".into())).unwrap()
+        }
+        _ => panic!("expected tracking commit"),
+    }
+    cx.run_until_parked();
+    assert!(!runner.join("calls").exists());
+    entity.read_with(cx, |app, _| {
+        assert!(!app.work.running);
+        assert!(app
+            .work
+            .panel
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("disk full"));
+    });
+}
+
+#[gpui::test]
+fn residency_refusal_finishes_and_persists_accepted_turn(cx: &mut gpui::TestAppContext) {
+    let Some(home) = isolated(
+        "work::build_staleness_tests::residency_refusal_finishes_and_persists_accepted_turn",
+    ) else {
+        return;
+    };
+    let entity = cx.new(AwiliApp::new);
+    let rx = entity.update(cx, |app, cx| {
+        let rx = wire(app, &home);
+        app.work.running = true;
+        app.work_push(crate::Role::Assistant, String::new());
+        app.work.stream_row_idx = Some(0);
+        let engine = app.guard_engine();
+        app.finish_guard(
+            Some(("Fixture residency refusal".into(), None)),
+            engine,
+            Arc::new(AtomicBool::new(false)),
+            |_, _| panic!("must not dispatch"),
+            cx,
+        );
+        assert!(!app.work.running);
+        assert!(app.work.stream_row_idx.is_none());
+        assert_eq!(app.work.panel.status, Some(RunStatus::Failed));
+        assert!(app.views[CONV]
+            .convo
+            .message(0)
+            .unwrap()
+            .text
+            .contains("Fixture residency refusal"));
+        rx
+    });
+    assert_eq!(rx.try_iter().filter(|cmd| matches!(cmd, PersistCmd::Append { text, .. } if text.contains("Fixture residency refusal"))).count(), 1);
+}
+
+#[gpui::test]
+fn stale_failed_commit_cannot_fail_a_newer_run(cx: &mut gpui::TestAppContext) {
+    use crate::build_dispatch::{build_request, ResolvedBuild};
+    use crate::build_dispatch_tests::{fake_ssh, input, targets, SCRIPT_FIXTURE};
+    let Some(home) =
+        isolated("work::build_staleness_tests::stale_failed_commit_cannot_fail_a_newer_run")
+    else {
+        return;
+    };
+    let _fixture = crate::exec_fixture::lock(&SCRIPT_FIXTURE);
+    let runner = home.join("stale-runner");
+    std::fs::create_dir_all(&runner).unwrap();
+    let resolved = ResolvedBuild::resolve_with(&targets(), "stryx", fake_ssh(&runner, 0)).unwrap();
+    let request = build_request(&resolved, &input("turn-old", "task".into())).unwrap();
+    let entity = cx.new(AwiliApp::new);
+    let rx = entity.update(cx, |app, cx| {
+        let rx = wire(app, &home);
+        app.work.run_seq += 1;
+        let run_id = app.work.run_seq;
+        app.work.running = true;
+        let key = LocalBuildHandle {
+            turn_id: request.turn_id.clone(),
+            request_id: request.request_id.clone(),
+            target_id: resolved.target_id.clone(),
+            revision: 0,
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        app.work.local_build = Some(key.clone());
+        app.drive_local_build(run_id, resolved, request, key, cx);
+        rx
+    });
+    cx.run_until_parked();
+    let reply = match rx.try_recv().unwrap() {
+        PersistCmd::CommitBuildJob { reply, .. } => reply,
+        _ => panic!("expected tracking commit"),
+    };
+    entity.update(cx, |app, _| {
+        app.work.run_seq += 1;
+        app.work.panel.error = None;
+        app.work.running = true;
+    });
+    reply.send_blocking(Err("old disk failure".into())).unwrap();
+    cx.run_until_parked();
+    assert!(!runner.join("calls").exists());
+    entity.read_with(cx, |app, _| {
+        assert!(app.work.running);
+        assert!(app.work.panel.error.is_none());
+    });
+}
+
+#[gpui::test]
+fn missing_storage_never_invokes_build_runner(cx: &mut gpui::TestAppContext) {
+    use crate::build_dispatch::{build_request, ResolvedBuild};
+    use crate::build_dispatch_tests::{fake_ssh, input, targets, SCRIPT_FIXTURE};
+    let Some(home) =
+        isolated("work::build_staleness_tests::missing_storage_never_invokes_build_runner")
+    else {
+        return;
+    };
+    let _fixture = crate::exec_fixture::lock(&SCRIPT_FIXTURE);
+    let runner = home.join("no-storage-runner");
+    std::fs::create_dir_all(&runner).unwrap();
+    let resolved = ResolvedBuild::resolve_with(&targets(), "stryx", fake_ssh(&runner, 0)).unwrap();
+    let request = build_request(&resolved, &input("turn-no-store", "task".into())).unwrap();
+    let entity = cx.new(AwiliApp::new);
+    entity.update(cx, |app, cx| {
+        let _ = wire(app, &home);
+        app.persist = None;
+        app.work.run_seq += 1;
+        app.work.running = true;
+        let key = LocalBuildHandle {
+            turn_id: request.turn_id.clone(),
+            request_id: request.request_id.clone(),
+            target_id: resolved.target_id.clone(),
+            revision: 0,
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        app.work.local_build = Some(key.clone());
+        app.drive_local_build(app.work.run_seq, resolved, request, key, cx);
+    });
+    cx.run_until_parked();
+    assert!(!runner.join("calls").exists());
+    entity.read_with(cx, |app, _| {
+        assert!(!app.work.running);
+        assert!(app
+            .work
+            .panel
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("Storage is unavailable"));
+    });
+}
+
+#[gpui::test]
+fn nonwarm_worker_construction_failure_finishes_accepted_turn(cx: &mut gpui::TestAppContext) {
+    let Some(home) = isolated(
+        "work::build_staleness_tests::nonwarm_worker_construction_failure_finishes_accepted_turn",
+    ) else {
+        return;
+    };
+    let root = engine_data_root().unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("logs"), b"fixture blocks directory creation").unwrap();
+    let entity = cx.new(AwiliApp::new);
+    let rx = entity.update(cx, |app, cx| {
+        let rx = wire(app, &home);
+        app.work.engine.kind = awili_config::EngineKind::Awili;
+        app.work.running = true;
+        app.work_push(crate::Role::Assistant, String::new());
+        app.work.stream_row_idx = Some(0);
+        assert!(!app.spawn_work_worker(
+            GatewayCmd::Warm { system: None },
+            None,
+            CONV.into(),
+            Arc::new(AtomicBool::new(false)),
+            false,
+            cx
+        ));
+        assert!(!app.work.running);
+        assert!(app.work.stream_row_idx.is_none());
+        assert_eq!(app.work.panel.status, Some(RunStatus::Failed));
+        assert!(app.views[CONV]
+            .convo
+            .message(0)
+            .unwrap()
+            .text
+            .contains("cannot create"));
+        rx
+    });
+    assert_eq!(rx.try_iter().filter(|cmd| matches!(cmd, PersistCmd::Append { text, .. } if text.contains("cannot create"))).count(), 1);
 }

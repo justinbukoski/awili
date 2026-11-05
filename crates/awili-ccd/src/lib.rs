@@ -343,10 +343,20 @@ impl CcdClient {
         }
         let body = String::from_utf8_lossy(&bytes).into_owned();
         if !status.is_success() {
-            return Err(CcdError::Http {
-                status: status.as_u16(),
-                body,
-            });
+            let mut diagnostic = if over { "response body exceeds size limit".to_string() } else if self.token.is_empty() { body } else { body.replace(&self.token, "[REDACTED]") };
+            let mut from = 0;
+            loop {
+                let lower = diagnostic.to_ascii_lowercase();
+                let Some(offset) = lower[from..].find("bearer") else { break };
+                let after = from + offset + 6;
+                let gap = diagnostic[after..].len() - diagnostic[after..].trim_start().len();
+                let start = after + gap;
+                let length = diagnostic[start..].find(char::is_whitespace).unwrap_or(diagnostic.len() - start);
+                if gap == 0 || length == 0 || diagnostic[start..].starts_with("[REDACTED]") { from = after; continue; }
+                diagnostic.replace_range(start..start + length, "[REDACTED]");
+                from = start + "[REDACTED]".len();
+            }
+            return Err(CcdError::Http { status: status.as_u16(), body: diagnostic.chars().take(2048).collect() });
         }
         Ok(body)
     }

@@ -181,6 +181,20 @@ pub(crate) fn footer_text(f: &FooterFacts<'_>) -> String {
     parts.join(" · ")
 }
 
+pub(crate) fn compact_metric(part: &str) -> Vec<String> {
+    if let Some(count) = part.strip_suffix(" cached (included in input)") {
+        return vec![format!("Cached {count}")];
+    }
+    if let Some(usage) = part.strip_prefix("this turn: ") {
+        if let Some((input, output)) = usage.split_once(" input + ") {
+            if let Some(output) = output.strip_suffix(" output") {
+                return vec![format!("In {input}"), format!("Out {output}")];
+            }
+        }
+    }
+    vec![part.to_string()]
+}
+
 /// The rendered line: LABEL_SIZE, MUTED, px(SPACE_M). Pure element builder.
 ///
 /// RC2-R1G3 (RC2-R1F review P3): the text is drawn by a
@@ -188,9 +202,16 @@ pub(crate) fn footer_text(f: &FooterFacts<'_>) -> String {
 /// ([`DRAWN_FOOTERS`]): the words it laid out, as the reply shows them.
 pub(crate) fn footer_line(text: SharedString) -> gpui::Div {
     use crate::theme;
-    let drawn = gpui::StyledText::new(text);
+    let metrics: Vec<_> = text
+        .split(" · ")
+        .flat_map(compact_metric)
+        .map(gpui::StyledText::new)
+        .collect();
     #[cfg(test)]
-    DRAWN_FOOTERS.with(|d| d.borrow_mut().push(drawn.layout().clone()));
+    DRAWN_FOOTERS.with(|d| {
+        d.borrow_mut()
+            .push(metrics.iter().map(|m| m.layout().clone()).collect())
+    });
     gpui::div()
         // The transcript's intrinsic height pass needs the same definite
         // width used to paint the wrapped footer. An auto-width block can
@@ -200,14 +221,22 @@ pub(crate) fn footer_line(text: SharedString) -> gpui::Div {
         .text_size(theme::z(theme::LABEL_SIZE))
         .text_color(theme::p().muted)
         .px(theme::z(theme::SPACE_M))
-        .child(drawn)
+        .flex()
+        .flex_wrap()
+        .gap_x(theme::z(theme::SPACE_M))
+        .gap_y(theme::z(4.))
+        .children(
+            metrics
+                .into_iter()
+                .map(|metric| gpui::div().flex_none().max_w_full().child(metric)),
+        )
 }
 
 #[cfg(test)]
 thread_local! {
     /// RC2-R1G3: the layout of every reply footer drawn on this thread, in
     /// draw order (a test clears it, then reads the frame it draws).
-    pub(crate) static DRAWN_FOOTERS: std::cell::RefCell<Vec<gpui::TextLayout>> =
+    pub(crate) static DRAWN_FOOTERS: std::cell::RefCell<Vec<Vec<gpui::TextLayout>>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -218,8 +247,15 @@ pub(crate) fn drawn_footers() -> Vec<String> {
     DRAWN_FOOTERS.with(|d| {
         d.borrow()
             .iter()
-            .filter_map(|layout| {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| layout.text())).ok()
+            .filter_map(|layouts| {
+                layouts
+                    .iter()
+                    .map(|layout| {
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| layout.text()))
+                            .ok()
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .map(|parts| parts.join(" · "))
             })
             .collect()
     })

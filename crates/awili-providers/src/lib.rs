@@ -14,8 +14,10 @@
 //! network) and validated by the Mac smoke pass instead.
 
 mod anthropic;
+mod approval;
 mod decode;
 mod event;
+pub use approval::{ApprovalChoice, HostApproval};
 mod ollama;
 mod openai;
 mod transport;

@@ -19,12 +19,13 @@
 //! This file is the GPUI shell tying those crates together; the composer entity
 //! (slice 1) is reused unchanged. Every color is a `theme` token (the grep gate).
 
+mod agent_bin;
 mod agent_brief;
-mod allowed_actions;
 mod agent_chat;
 mod agent_launch;
 mod agent_sandbox;
 mod agent_signin;
+mod allowed_actions;
 mod app_lifecycle;
 mod appearance;
 mod approval_keys;
@@ -46,6 +47,7 @@ mod code_provider;
 mod code_reopen;
 mod code_run;
 mod codex_app_server;
+mod codex_approval;
 mod codex_catalog;
 mod command_catalog;
 mod command_center;
@@ -68,8 +70,6 @@ mod council_run;
 #[cfg(test)]
 #[path = "council_tests.rs"]
 mod council_tests;
-#[cfg(test)]
-mod first_send_render_tests;
 mod council_view;
 mod cron;
 #[cfg(test)]
@@ -81,6 +81,8 @@ mod exec_fixture;
 mod executor_status;
 mod fallback;
 mod feed;
+#[cfg(test)]
+mod first_send_render_tests;
 mod fleet_skills;
 mod focus_nav;
 mod gateway_health;
@@ -88,12 +90,11 @@ mod gateway_health_app;
 mod gateway_pool;
 mod gateway_stop_deadline;
 mod graduation_record;
+mod home;
 mod icons;
 #[cfg(test)]
 mod inline_blocking_tests;
 mod inline_error;
-mod run_error;
-mod run_error_ui;
 #[cfg(test)]
 mod inline_error_tests;
 #[cfg(test)]
@@ -103,8 +104,6 @@ mod job_interiors_tests;
 mod job_panel;
 #[cfg(test)]
 mod job_panel_tests;
-#[cfg(test)]
-mod topbar_tests;
 mod launch_landing;
 #[cfg(test)]
 mod launch_probe_tests;
@@ -118,10 +117,14 @@ mod rc2ux_layout_tests;
 mod reply_inspector;
 #[cfg(test)]
 mod reply_inspector_tests;
-#[cfg(test)]
-mod skills_panel_tests;
+mod run_error;
+mod run_error_ui;
 mod send_queue;
 mod send_queue_app;
+#[cfg(test)]
+mod skills_panel_tests;
+mod strip;
+mod strip_app;
 mod submit_guard;
 #[cfg(test)]
 mod test_child;
@@ -134,15 +137,13 @@ mod test_tmp;
 #[cfg(test)]
 #[path = "toast_tests.rs"]
 mod toast_tests;
-mod agent_bin;
-mod home;
+#[cfg(test)]
+mod topbar_tests;
+mod winbounds;
 #[cfg(windows)]
 mod winjob;
-mod winbounds;
 mod workshop;
 mod workshop_composer;
-mod strip;
-mod strip_app;
 #[cfg(test)]
 mod workshop_geometry_tests;
 #[cfg(test)]
@@ -197,20 +198,20 @@ mod palette;
 mod palette_targets;
 mod persistence;
 // U3b2 hold-to-talk guard (the PTT state machine + its AwiliApp hooks).
+mod context_breakdown;
 mod picker;
 mod profile;
 mod profile_palette;
 mod prompt_history;
 mod provider_build;
-mod secret_store;
 mod ptt_guard;
 mod recall;
 mod resume_context;
 #[cfg(test)]
 mod resume_context_tests;
-mod context_breakdown;
 mod run_footer;
 mod search;
+mod secret_store;
 mod selectable_message;
 mod sessions;
 mod settings;
@@ -1310,7 +1311,11 @@ pub(crate) fn render_code_bubble(
             div()
                 .text_size(theme::z(theme::LABEL_SIZE))
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(if assistant { theme::p().attention } else { theme::p().muted })
+                .text_color(if assistant {
+                    theme::p().attention
+                } else {
+                    theme::p().muted
+                })
                 .child(label),
         )
         .child(
@@ -3129,6 +3134,26 @@ impl AwiliApp {
         app.ensure_health_ticker(cx);
         // RC2-R61: a quit stops what is running as a Stop does.
         Self::watch_quit(cx);
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(500))
+                .await;
+            let done = this
+                .update(cx, |app, cx| {
+                    if let Some(problem) = app.persist.as_ref().and_then(|p| p.storage_problem()) {
+                        app.storage_notice = Some(problem);
+                        cx.notify();
+                        true
+                    } else {
+                        false
+                    }
+                })
+                .unwrap_or(true);
+            if done {
+                break;
+            }
+        })
+        .detach();
         app
     }
 
@@ -3921,7 +3946,7 @@ impl AwiliApp {
 
     /// The profile-folder problem (Windows), plainly, above everything else:
     /// nothing is saved while it stands.
-    fn storage_notice_banner(&self, message: &str) -> gpui::AnyElement {
+    fn storage_notice_banner(&self, message: &str, cx: &mut Context<Self>) -> gpui::AnyElement {
         div()
             .id("storage-notice-banner")
             .flex_none()
@@ -3935,8 +3960,33 @@ impl AwiliApp {
             .text_size(theme::z(theme::LABEL_SIZE))
             .text_color(theme::p().chip_warn)
             .child(format!(
-                "{message}. Your conversations and settings are not being saved until that is fixed."
+                "{message} Changes may not be saved; copy important work before closing Awili."
             ))
+            .when(
+                self.persist
+                    .as_ref()
+                    .is_some_and(|p| p.has_unsaved_messages()),
+                |banner| {
+                    banner.child(
+                        div()
+                            .id("copy-unsaved-messages")
+                            .debug_selector(|| "copy-unsaved-messages".into())
+                            .cursor_pointer()
+                            .child("Copy unsaved messages")
+                            .on_click(cx.listener(|app, _, _, cx| {
+                                let recovery = app
+                                    .persist
+                                    .as_ref()
+                                    .map(|p| p.unsaved_messages_recovery())
+                                    .unwrap_or_default();
+                                if !recovery.is_empty() {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(recovery));
+                                    app.show_toast("Unsaved messages copied", cx);
+                                }
+                            })),
+                    )
+                },
+            )
             .into_any_element()
     }
 
@@ -3963,10 +4013,7 @@ impl AwiliApp {
                 } else {
                     format!("{line}. Open Settings and enter it again.")
                 };
-                div()
-                    .min_w_0()
-                    .child(text)
-                    .into_any_element()
+                div().min_w_0().child(text).into_any_element()
             }))
             .into_any_element()
     }
@@ -4136,12 +4183,8 @@ impl AwiliApp {
             theme::p().chip_text
         };
         let harness_only = self.onboarding_harness.is_some() && !self.onboarding_other_route;
-        let subtext = onboarding::welcome_subtext(
-            ready,
-            saved,
-            harness_only,
-            !self.choices.is_empty(),
-        );
+        let subtext =
+            onboarding::welcome_subtext(ready, saved, harness_only, !self.choices.is_empty());
         div()
             .id("welcome-panel")
             .track_focus(&self.welcome_focus)
@@ -4275,12 +4318,14 @@ impl AwiliApp {
                                 s.border_color(theme::p().accent)
                                     .text_color(theme::p().accent_text)
                             })
-                            .child(shortcuts::localize(if harness_only {
-                                "Open Work (⌘Return)"
-                            } else {
-                                "Start chatting (⌘Return)"
-                            })
-                            .into_owned())
+                            .child(
+                                shortcuts::localize(if harness_only {
+                                    "Open Work (⌘Return)"
+                                } else {
+                                    "Start chatting (⌘Return)"
+                                })
+                                .into_owned(),
+                            )
                             .on_click(cx.listener(move |this, _ev, window, cx| {
                                 this.welcome_action = 2;
                                 this.start_onboarding_chat(window, cx);
@@ -5863,13 +5908,20 @@ impl AwiliApp {
         match &self.persist {
             Some(p) => {
                 let (tx, rx) = async_channel::bounded(1);
+                let editor = self.template_editor;
+                let saved_name = name.clone();
+                let saved_content = content.clone();
                 p.send(PersistCmd::UpsertTemplate {
                     name,
                     content,
                     reply: tx,
                 });
                 cx.spawn(async move |this, cx| {
-                    if let Ok(reply) = rx.recv().await {
+                    {
+                        let reply = rx
+                            .recv()
+                            .await
+                            .unwrap_or_else(|_| Err("Storage worker stopped".into()));
                         this.update(cx, |app, cx| {
                             let (templates, err) =
                                 merge_template_reply(std::mem::take(&mut app.templates), reply);
@@ -5879,7 +5931,15 @@ impl AwiliApp {
                             // it into a silently-empty palette.
                             if let Some(e) = err {
                                 eprintln!("awili: template list refresh failed: {e}");
-                                app.show_toast(format!("Couldn't refresh templates: {e}"), cx);
+                                app.show_sticky_toast(format!("Couldn't save template: {e}"), cx);
+                            } else {
+                                if app.template_editor == editor
+                                    && app.template_name.read(cx).text().trim() == saved_name
+                                    && app.template_content.read(cx).text() == saved_content
+                                {
+                                    app.template_editor = None;
+                                }
+                                app.show_toast("Template saved", cx);
                             }
                             cx.notify();
                         })
@@ -5887,6 +5947,7 @@ impl AwiliApp {
                     }
                 })
                 .detach();
+                return;
             }
             None => {
                 // No database: same upsert-by-name semantics, session-only.
@@ -6278,7 +6339,10 @@ impl AwiliApp {
     /// assert it against a real [`WorkState`].
     fn refresh_work_endpoints(work: &mut WorkState, cfg: &Config) {
         if (work.engine != cfg.engine || work.extra_engines != cfg.engines)
-            && matches!(work.worker_identity, Some(crate::work_run_identity::WorkRunIdentity::OwnedEngine { .. }))
+            && matches!(
+                work.worker_identity,
+                Some(crate::work_run_identity::WorkRunIdentity::OwnedEngine { .. })
+            )
         {
             if work.running || work.gateway_stop_pending {
                 work.retire_after_run = true;
@@ -6288,7 +6352,8 @@ impl AwiliApp {
         }
         // L1e2a-FIX1: a new local endpoint is unchecked; the old result and
         // any probe in flight no longer count.
-        if work.engine.base_url != cfg.engine.base_url {
+        if work.engine.base_url != cfg.engine.base_url || work.engine.api_key != cfg.engine.api_key
+        {
             work.local.endpoint_changed();
         }
         work.engine = cfg.engine.clone();
@@ -6351,7 +6416,8 @@ impl AwiliApp {
         // First-run welcome boundary: a successful settings commit is the only
         // place onboarding learns about a save. Declared config choices only —
         // no discovered models, no network status. Complete stays Complete.
-        self.onboarding.on_saved(harness_setup::work_route_ready(&cfg));
+        self.onboarding
+            .on_saved(harness_setup::work_route_ready(&cfg));
         // A genuine save clears any welcome "Check again" error copy.
         self.onboarding_error = None;
         self.apply_runtime_config(&cfg, cx);
@@ -6739,10 +6805,13 @@ impl AwiliApp {
         // below. A late child from another harness must never write its id into
         // this accepted turn's slot.
         if session.project_folder.as_deref() != Some(cwd.as_str()) {
+            session.approval_session = Default::default();
             session.project_folder = Some(cwd.clone());
         }
         session.engine = engine;
         session.model = model.clone();
+        let approval_session = session.approval_session.clone();
+        session.host_approval = None;
         let slot = crate::code_provider::fresh_session_slot(bridge.resume_id());
         session.session_slot = std::sync::Arc::clone(&slot);
 
@@ -6810,6 +6879,7 @@ impl AwiliApp {
             model.clone(),
             slot,
         )
+        .with_approval_session(approval_session)
         .with_search_paths(self.work.agents.search_paths.clone())
         .with_agent_memory(self.work.agents.memory.clone())
         .with_agents_md(self.work.agents.agents_md.clone())
@@ -6878,14 +6948,24 @@ impl AwiliApp {
                     break;
                 }
                 match ev {
+                    ProviderEvent::HostApproval(request) => {
+                        this.update(cx, |app, cx| {
+                            if let Some(session) =
+                                app.work.code_tabs.iter_mut().find(|s| s.id == tab_id)
+                            {
+                                session.host_approval = Some(request);
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    }
                     ProviderEvent::Token(t) => {
-                        this
-                            .update(cx, |app, cx| {
-                                let strip_conv = app.strip_tab_conv(tab_id);
-                                app.strip_on_token(&strip_conv, cx);
-                                app.code_on_token(tab_id, aidx, &t, cx)
-                            })
-                            .ok();
+                        this.update(cx, |app, cx| {
+                            let strip_conv = app.strip_tab_conv(tab_id);
+                            app.strip_on_token(&strip_conv, cx);
+                            app.code_on_token(tab_id, aidx, &t, cx)
+                        })
+                        .ok();
                     }
                     // RC2-R2G7: a tool that started shows like any activity.
                     ProviderEvent::Activity(line) | ProviderEvent::ToolStarted(line) => {
@@ -6977,6 +7057,10 @@ impl AwiliApp {
         let active = index;
         let mut stopped = None;
         if let Some(session) = self.work.code_tabs.get_mut(active) {
+            if let Some(request) = session.host_approval.take() {
+                request.answer(awili_providers::ApprovalChoice::Deny);
+            }
+            session.approval_session = Default::default();
             if let Some(tx) = session.stream_abort_tx.take() {
                 session.history.note_stop();
                 let _ = tx.send(());
@@ -7044,11 +7128,8 @@ impl AwiliApp {
             .find(|s| s.id == tab_id)
             .and_then(|s| s.project_folder.clone())
             .unwrap_or_default();
-        let line = crate::agent_brief::mark_outside_scope(
-            line,
-            &folder,
-            &crate::home::home_string(),
-        );
+        let line =
+            crate::agent_brief::mark_outside_scope(line, &folder, &crate::home::home_string());
         if let Some(session) = self.work.code_tabs.iter_mut().find(|s| s.id == tab_id) {
             if let Some(row) = session.rows.get_mut(idx) {
                 row.push_activity(line);
@@ -10377,7 +10458,11 @@ impl AwiliApp {
                     .text_size(theme::z(theme::type_::CAPTION.size))
                     .line_height(theme::z(theme::type_::CAPTION.line))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(if is_user { theme::p().muted } else { theme::p().attention })
+                    .text_color(if is_user {
+                        theme::p().muted
+                    } else {
+                        theme::p().attention
+                    })
                     .child(label),
             )
             .children(speaker)
@@ -10610,43 +10695,41 @@ impl AwiliApp {
             )
             });
         let compact = header.is_some();
-        let list = list
-            .children(header)
-            .child(
-                // A declared reading width is known before wrapped children
-                // are measured. The flex row shrinks it in narrow viewports;
-                // an auto-width column can reserve a tall, empty scroll tail.
-                div()
-                    .flex_none()
-                    .flex()
-                    .flex_row()
-                    .w_full()
-                    .justify_center()
-                    .child(
-                        div()
-                            .when(row_debug(), |d| {
-                                d.on_children_prepainted(|bounds, _window, _cx| {
-                                    for (i, b) in bounds.iter().enumerate() {
-                                        eprintln!(
-                                            "[ROW] {i}: y={:?} h={:?} w={:?}",
-                                            b.origin.y, b.size.height, b.size.width
-                                        );
-                                    }
-                                })
+        let list = list.children(header).child(
+            // A declared reading width is known before wrapped children
+            // are measured. The flex row shrinks it in narrow viewports;
+            // an auto-width column can reserve a tall, empty scroll tail.
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .w_full()
+                .justify_center()
+                .child(
+                    div()
+                        .when(row_debug(), |d| {
+                            d.on_children_prepainted(|bounds, _window, _cx| {
+                                for (i, b) in bounds.iter().enumerate() {
+                                    eprintln!(
+                                        "[ROW] {i}: y={:?} h={:?} w={:?}",
+                                        b.origin.y, b.size.height, b.size.width
+                                    );
+                                }
                             })
-                            .flex()
-                            .flex_col()
-                            .gap(theme::z(16.))
-                            .w(theme::z(theme::READING_MAX))
-                            .min_w_0()
-                            .px(theme::z(theme::SP_24))
-                            .py(theme::z(theme::SP_24))
-                            .children(hero)
-                            .children(rows)
-                            .children(blocking_fallback)
-                            .children(error_fallback),
-                    ),
-            );
+                        })
+                        .flex()
+                        .flex_col()
+                        .gap(theme::z(16.))
+                        .w(theme::z(theme::READING_MAX))
+                        .min_w_0()
+                        .px(theme::z(theme::SP_24))
+                        .py(theme::z(theme::SP_24))
+                        .children(hero)
+                        .children(rows)
+                        .children(blocking_fallback)
+                        .children(error_fallback),
+                ),
+        );
         div()
             .relative()
             .flex()
@@ -12462,9 +12545,12 @@ impl AwiliApp {
                     None,
                 )
             }
-            PaletteCmd::NewConversation => {
-                ("+ New conversation".into(), shortcuts::localize("⌘N").into_owned().into(), Vec::new(), None)
-            }
+            PaletteCmd::NewConversation => (
+                "+ New conversation".into(),
+                shortcuts::localize("⌘N").into_owned().into(),
+                Vec::new(),
+                None,
+            ),
             PaletteCmd::OpenSettings => (
                 "Settings".into(),
                 shortcuts::localize("⌘,").into_owned().into(),
@@ -12543,9 +12629,12 @@ impl AwiliApp {
                         .into_any_element(),
                 ),
             ),
-            PaletteCmd::ShowShortcuts => {
-                ("⌨ Keyboard shortcuts".into(), shortcuts::localize("⌘?").into_owned().into(), Vec::new(), None)
-            }
+            PaletteCmd::ShowShortcuts => (
+                "⌨ Keyboard shortcuts".into(),
+                shortcuts::localize("⌘?").into_owned().into(),
+                Vec::new(),
+                None,
+            ),
             PaletteCmd::DiscardSummary => {
                 // The hint counts the turns the most-recent summary would restore.
                 let n = self
@@ -13581,14 +13670,18 @@ impl Render for AwiliApp {
         } else {
             main
         };
-        let main = match self.storage_notice.as_deref() {
+        let storage_problem = self.persist.as_ref().and_then(|p| p.storage_problem());
+        let main = match storage_problem
+            .as_deref()
+            .or(self.storage_notice.as_deref())
+        {
             Some(message) => div()
                 .flex()
                 .flex_col()
                 .flex_1()
                 .min_w_0()
                 .h_full()
-                .child(self.storage_notice_banner(message))
+                .child(self.storage_notice_banner(message, cx))
                 .child(main)
                 .into_any_element(),
             None => main,
@@ -15113,6 +15206,7 @@ mod usage_wiring_tests {
         let persist = Persistence {
             tx,
             failed: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            recovery: Default::default(),
         };
         use std::sync::atomic::Ordering;
         assert!(
@@ -17328,3 +17422,97 @@ mod work_last_run_tests {
 
 #[cfg(test)]
 mod runtime_palette_tests;
+
+#[cfg(test)]
+mod linux_repair_template_tests {
+    use super::*;
+
+    #[gpui::test]
+    fn delayed_sql_failure_wakes_storage_banner_with_copy_action(cx: &mut gpui::TestAppContext) {
+        if !crate::consolidation_tests::isolated("linux_repair_template_tests::delayed_sql_failure_wakes_storage_banner_with_copy_action") { return; }
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let (persist, worker) =
+            Persistence::spawn_worker(Store::open(&dir.path().join("storage.db")).unwrap());
+        let (app, window) = cx.add_window_view(|_, cx| AwiliApp::new(cx));
+        app.update(window, |app, cx| {
+            app.persist = Some(persist.clone());
+            app.onboarding = crate::onboarding::Onboarding::existing();
+            cx.notify();
+        });
+        window.simulate_resize(gpui::size(gpui::px(1000.), gpui::px(800.)));
+        window.run_until_parked(); // start the monitor before the delayed write fails
+        persist.append(
+            "missing-conversation-banner",
+            "user",
+            "recoverable sentinel".into(),
+            123,
+        );
+        let (reply, ack) = async_channel::bounded(1);
+        persist.send(PersistCmd::ReadState {
+            key: "barrier".into(),
+            reply,
+        });
+        ack.recv_blocking().unwrap();
+        assert!(persist.storage_problem().is_some());
+        window.executor().advance_clock(Duration::from_millis(600));
+        window.run_until_parked();
+        assert!(
+            app.read_with(window, |app, _| app.storage_notice.is_some()),
+            "the monitor should observe the failure"
+        );
+        // VisualTestContext does not automatically paint a new native frame.
+        window.update(|win, cx| win.draw(cx).clear());
+        assert!(
+            window.debug_bounds("copy-unsaved-messages").is_some(),
+            "copy action should be rendered after the error wake"
+        );
+        let bounds = window.debug_bounds("copy-unsaved-messages").unwrap();
+        window.simulate_click(bounds.center(), gpui::Modifiers::default());
+        window.run_until_parked();
+        let copied = window.update(|_, cx| {
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .unwrap()
+        });
+        assert!(copied.contains("recoverable sentinel"));
+        assert!(copied.contains("missing-conversation-banner"));
+        app.update(window, |app, _| app.persist = None);
+        drop(persist);
+        worker.join().unwrap();
+    }
+
+    #[gpui::test]
+    fn failed_template_write_keeps_editor_and_authored_text(cx: &mut gpui::TestAppContext) {
+        if !crate::consolidation_tests::isolated(
+            "linux_repair_template_tests::failed_template_write_keeps_editor_and_authored_text",
+        ) {
+            return;
+        }
+        cx.executor().allow_parking();
+        let app = cx.new(AwiliApp::new);
+        let (persist, rx) = crate::build_dispatch_p10_tests::recording_persist();
+        app.update(cx, |app, cx| {
+            app.persist = Some(persist);
+            app.template_editor = Some(None);
+            app.template_name
+                .update(cx, |c, cx| c.set_text("Authored template", cx));
+            app.template_content
+                .update(cx, |c, cx| c.set_text("Important draft", cx));
+            app.save_template(cx);
+            assert!(app.template_editor.is_some());
+        });
+        match rx.try_recv().unwrap() {
+            PersistCmd::UpsertTemplate { reply, .. } => {
+                reply.send_blocking(Err("disk full".into())).unwrap()
+            }
+            _ => panic!("expected template write"),
+        }
+        cx.run_until_parked();
+        app.read_with(cx, |app, cx| {
+            assert!(app.template_editor.is_some());
+            assert_eq!(app.template_name.read(cx).text(), "Authored template");
+            assert_eq!(app.template_content.read(cx).text(), "Important draft");
+        });
+    }
+}

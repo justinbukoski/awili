@@ -72,6 +72,8 @@ pub(crate) fn clamp_u32(n: u64) -> u32 {
 /// here, including nonterminal agent activity and failed tool attempts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProviderEvent {
+    /// Human consent; unsupported consumers drop it, which denies the request.
+    HostApproval(crate::HostApproval),
     /// A chunk of generated text to append to the reply bubble.
     Token(String),
     /// Token accounting (usually arrives near the end).

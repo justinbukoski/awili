@@ -365,7 +365,7 @@ impl CodeEngine {
         let flags: &[&str] = match (self, autonomy) {
             (CodeEngine::Claude, Autonomy::Autonomous) => &["--dangerously-skip-permissions"],
             // The planning step (RC1-M): Claude Code's own plan mode with no
-            // prompts, and every tool the owner has — no allowlist, no MCP
+            // interactive prompts (`-p` is non-interactive), and every tool the owner has — no allowlist, no MCP
             // cut. Plan mode is what holds the step: read-only tools run,
             // anything that changes things (built-in or MCP) is refused until
             // the owner approves the plan (live 2026-10-03, claude 2.1.282: a
@@ -373,9 +373,9 @@ impl CodeEngine {
             // even when its server was allowed). The launch adds the
             // `--allowedTools=mcp__<server>` entries that let read-only MCP
             // tools run on every model.
-            (CodeEngine::Claude, Autonomy::AskFirst) => {
-                &["--permission-mode", "plan", "--permission-prompts", "none"]
-            }
+            // Older installed CLIs reject `--permission-prompts none`. Plan
+            // mode still enforces read-only; print mode cannot prompt.
+            (CodeEngine::Claude, Autonomy::AskFirst) => &["--permission-mode", "plan"],
             (CodeEngine::Codex, Autonomy::Autonomous) => {
                 &["--dangerously-bypass-approvals-and-sandbox"]
             }

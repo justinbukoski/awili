@@ -89,7 +89,8 @@ pub(crate) fn distill_and_store(
     futures::executor::block_on(async {
         while let Some(ev) = stream.next().await {
             match ev {
-                ProviderEvent::Activity(_)
+                ProviderEvent::HostApproval(_)
+                    | ProviderEvent::Activity(_)
                 | ProviderEvent::ToolStarted(_)
                 | ProviderEvent::ContextWindow(_)
                 | ProviderEvent::ToolAttemptFailed => {}

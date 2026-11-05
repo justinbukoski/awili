@@ -175,6 +175,7 @@ fn project_failed_save_keeps_unsaved_tab_identity(cx: &mut gpui::TestAppContext)
         app.persist = Some(crate::Persistence {
             tx,
             failed: Default::default(),
+            recovery: Default::default(),
         });
         app.mode = Mode::Code;
         app.work.projects = vec![project(1, "/repo/a")];
@@ -472,6 +473,7 @@ fn workshop_tabs_malformed_state_never_resurrects_legacy_or_overwrites(
         app.persist = Some(crate::Persistence {
             tx,
             failed: Default::default(),
+            recovery: Default::default(),
         });
         app.sync_workshop_tabs();
         assert!(

@@ -364,3 +364,20 @@ fn the_production_deadline_gives_up_at_three_seconds() {
         "given up at the 3 s deadline: {took:?}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn status_output_overflow_and_inherited_pipe_are_bounded() {
+    let dir = tempfile::tempdir().unwrap();
+    let flood = dir.path().join("flood");
+    crate::exec_fixture::write_exec_fixture(&flood, "#!/bin/sh\nhead -c 131072 /dev/zero\n", 0o755);
+    assert!(ask_cli(flood.to_str().unwrap(), &[], Duration::from_secs(2)).is_none());
+    let holder = dir.path().join("holder");
+    crate::exec_fixture::write_exec_fixture(&holder, "#!/bin/sh\nsleep 30 &\nprintf 'ok'\n", 0o755);
+    let start = Instant::now();
+    assert_eq!(
+        ask_cli(holder.to_str().unwrap(), &[], Duration::from_secs(2)),
+        Some((true, b"ok".to_vec()))
+    );
+    assert!(start.elapsed() < Duration::from_secs(2));
+}

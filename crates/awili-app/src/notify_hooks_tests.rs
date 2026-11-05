@@ -377,7 +377,9 @@ fn local_build_run_end_posts_once(cx: &mut gpui::TestAppContext) {
     .unwrap();
 
     let entity = cx.new(AwiliApp::new);
+    let (persist, rx) = crate::build_dispatch_p10_tests::recording_persist();
     entity.update(cx, |app, cx| {
+        app.persist = Some(persist);
         away_authorized(app, cx);
         // The state `run_work_via_local_build` leaves before its drive.
         app.work.run_seq += 1;
@@ -401,6 +403,19 @@ fn local_build_run_end_posts_once(cx: &mut gpui::TestAppContext) {
         app.work.local_build = Some(key.clone());
         app.drive_local_build(run_id, resolved, request, key, cx);
     });
+    cx.run_until_parked();
+    let reply = rx
+        .try_iter()
+        .find_map(|cmd| match cmd {
+            crate::PersistCmd::CommitBuildJob { reply, .. } => Some(reply),
+            _ => None,
+        })
+        .expect("the build requested a durable tracking row");
+    assert!(
+        !runner.join("calls").exists(),
+        "the runner waits for acknowledgement"
+    );
+    reply.send_blocking(Ok(())).unwrap();
     cx.run_until_parked();
     entity.update(cx, |app, _| {
         assert!(!app.work.running, "the drive finished the run");

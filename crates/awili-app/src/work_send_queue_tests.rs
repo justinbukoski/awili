@@ -924,3 +924,47 @@ fn s5_cancel_puts_the_files_back_on_the_tray(cx: &mut gpui::TestAppContext) {
     entity.update(cx, |app, _| app.work.gateway_cmd_tx = None);
     handle.join().unwrap();
 }
+
+#[gpui::test]
+fn attachment_read_failure_keeps_busy_draft_and_tray(cx: &mut gpui::TestAppContext) {
+    let Some(_home) =
+        isolated("work::send_queue_tests::attachment_read_failure_keeps_busy_draft_and_tray")
+    else {
+        return;
+    };
+    let entity = cx.new(AwiliApp::new);
+    entity.update(cx, |app, cx| {
+        app.mode = Mode::Work;
+        app.work.running = true;
+        let conv = app.sidebar.active_id().to_string();
+        let store = app.search_store.as_ref().unwrap();
+        // The startup conversation may already be persisted; create only if absent.
+        if !store.conversations().unwrap().iter().any(|c| c.id == conv) {
+            store
+                .create_conversation_with_kind(&conv, "files", 1, "work")
+                .unwrap();
+        }
+        let id = store
+            .store_attachment("fixture.txt", "text/plain", b"fixture")
+            .unwrap();
+        store.stage_attachment(&conv, id).unwrap();
+        app.composer
+            .update(cx, |c, cx| c.set_text("keep this draft", cx));
+        crate::send_queue_app::FAIL_STAGED_READ.with(|flag| flag.set(true));
+        app.queue_busy_draft(cx);
+        crate::send_queue_app::FAIL_STAGED_READ.with(|flag| flag.set(false));
+        assert_eq!(app.composer.read(cx).text(), "keep this draft");
+        assert!(app.work.send_queue.items(&conv).is_empty());
+        assert_eq!(
+            app.search_store
+                .as_ref()
+                .unwrap()
+                .get_staged_attachments(&conv)
+                .unwrap()
+                .iter()
+                .map(|a| a.id)
+                .collect::<Vec<_>>(),
+            vec![id]
+        );
+    });
+}

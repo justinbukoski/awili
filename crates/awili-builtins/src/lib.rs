@@ -142,7 +142,7 @@ impl PreparedBuiltinFs {
         limits: Limits,
     ) -> Self {
         let awili_call_id = call.awili_call_id.clone();
-        let op = match BuiltinFsCall::parse(&call.name, &call.arguments) {
+        let op = match BuiltinFsCall::parse(&evidence.tool_identity().name, &call.arguments) {
             Ok(op) => op,
             Err(e @ BuiltinFsParseError::MalformedJson { .. }) => {
                 // Behind B2 this is unreachable: C1 refuses to mint

@@ -786,7 +786,7 @@ fn recorder(dir: &Path, name: &str, out: &str) -> PathBuf {
     std::fs::write(
         &bin,
         format!(
-            "#!/bin/sh\ncat > {}.stdin\n{{ prev=\"\"; for a in \"$@\"; do if [ \"$prev\" = --append-system-prompt-file ]; then printf '%s\\0' \"$(cat \"$a\")\"; elif [ \"$a\" = --append-system-prompt-file ]; then printf '%s\\0' --append-system-prompt; else printf '%s\\0' \"$a\"; fi; prev=\"$a\"; done; \
+            "#!/bin/sh\nif [ \"$1\" = app-server ]; then exit 2; fi\ncat > {}.stdin\n{{ prev=\"\"; for a in \"$@\"; do if [ \"$prev\" = --append-system-prompt-file ]; then printf '%s\\0' \"$(cat \"$a\")\"; elif [ \"$a\" = --append-system-prompt-file ]; then printf '%s\\0' --append-system-prompt; else printf '%s\\0' \"$a\"; fi; prev=\"$a\"; done; \
              printf 'ENV CODEX_HOME=%s AUTO_MEM=%s\\0' \"$CODEX_HOME\" \"$CLAUDE_CODE_DISABLE_AUTO_MEMORY\"; }} > {}\n\
              printf '%s\\n' '{out}'\n",
             rec.display(),
@@ -851,11 +851,12 @@ fn rc1m_spawned_launches() {
     };
     let cwd = f.sub.display().to_string();
     for (engine, bin, name) in [(Claude, &claude, "claude"), (Codex, &codex, "codex")] {
+        let autonomy = if engine == Codex { AskFirst } else { Auto };
         let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
         let p = CodeProvider::new(
             bin.display().to_string(),
             engine,
-            Auto,
+            autonomy,
             cwd.clone(),
             None,
             None,
@@ -866,6 +867,10 @@ fn rc1m_spawned_launches() {
         drain(p.run(req(Some("SYSTEM-TEXT")), rx));
         let argv = recorded(&dir, name);
         let (env, argv) = argv.split_last().unwrap();
+        if engine == Codex {
+            assert!(argv.windows(2).any(|w| w == ["--sandbox", "read-only"]), "{argv:?}");
+            assert!(!argv.iter().any(|a| a == "--dangerously-bypass-approvals-and-sandbox"), "{argv:?}");
+        }
         assert_eq!(env, "ENV CODEX_HOME= AUTO_MEM=", "{engine:?}");
         assert_eq!(
             argv.last().map(String::as_str),
@@ -876,7 +881,7 @@ fn rc1m_spawned_launches() {
             &f.paths(),
             &LaunchSpec {
                 mem: Some(&owner_mem()),
-                ..spec(engine, Auto, &f.sub)
+                ..spec(engine, autonomy, &f.sub)
             },
         );
         let at = argv
@@ -1130,4 +1135,22 @@ fn rc3s4_every_status_has_a_plain_sentence() {
     assert_eq!(s(DocStatus::Unreadable), "AGENTS.md could not be read");
     assert!(DocStatus::LimitReached.is_incomplete());
     assert!(!DocStatus::LeftToCli { cli: "x" }.is_incomplete());
+}
+
+#[cfg(unix)]
+#[test]
+fn instruction_fifo_without_writer_is_not_opened_blocking() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("AGENTS.md");
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(matches!(
+            read_doc_status(&path, 4096, None),
+            DocRead::Absent
+        ));
+    });
+    assert!(rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap());
 }

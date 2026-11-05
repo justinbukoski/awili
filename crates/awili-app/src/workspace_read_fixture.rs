@@ -3,30 +3,10 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// (device, inode) on Unix. TODO(windows-phase1): the volume serial and file
-/// index (`GetFileInformationByHandle`); until then the creation time stands in
-/// for the identity so a replaced file is still caught.
-#[cfg(unix)]
-fn identity(meta: &std::fs::Metadata) -> (u64, u64) {
-    use std::os::unix::fs::MetadataExt;
-    (meta.dev(), meta.ino())
-}
-#[cfg(not(unix))]
-fn identity(meta: &std::fs::Metadata) -> (u64, u64) {
-    let created = meta
-        .created()
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_nanos() as u64);
-    (0, created)
-}
-
 pub(crate) struct Challenge {
     pub id: String,
     pub nonce: String,
     pub path: PathBuf,
-    device: u64,
-    inode: u64,
 }
 
 impl Challenge {
@@ -64,15 +44,7 @@ impl Challenge {
         let mut file = options.open(&path)?;
         writeln!(file, "{nonce}")?;
         file.sync_all()?;
-        let meta = file.metadata()?;
-        let (device, inode) = identity(&meta);
-        Ok(Self {
-            id,
-            nonce,
-            path,
-            device,
-            inode,
-        })
+        Ok(Self { id, nonce, path })
     }
 
     pub fn request(&self) -> String {
@@ -80,18 +52,10 @@ impl Challenge {
     }
 
     pub fn cleanup(&self, termination_confirmed: bool) -> std::io::Result<bool> {
-        if !termination_confirmed {
-            return Ok(false);
-        }
-        let meta = std::fs::symlink_metadata(&self.path)?;
-        if !meta.is_file() || identity(&meta) != (self.device, self.inode) {
-            return Ok(false);
-        }
-        if std::fs::read(&self.path)? != format!("{}\n", self.nonce).as_bytes() {
-            return Ok(false);
-        }
-        std::fs::remove_file(&self.path)?;
-        Ok(true)
+        // A pathname in a shared workspace can be replaced between any
+        // identity check and unlink. Retain the private diagnostic instead.
+        let _ = termination_confirmed;
+        Ok(false)
     }
 }
 
@@ -109,7 +73,8 @@ mod tests {
         assert_ne!(a.nonce, b.nonce);
         assert!(!a.cleanup(false).unwrap());
         assert!(a.path.exists());
-        assert!(a.cleanup(true).unwrap());
+        assert!(!a.cleanup(true).unwrap());
+        assert!(a.path.exists());
         assert!(b.path.exists());
     }
     #[test]

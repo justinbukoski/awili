@@ -21,7 +21,7 @@
 //! Codex shows each message when it is written.
 
 use crate::proc_compat::OwnProcessGroup;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError};
@@ -162,6 +162,9 @@ struct Server {
     pgid: i32,
     stdin: Option<ChildStdin>,
     lines: Receiver<String>,
+    output_overflow: Arc<AtomicBool>,
+    reader_stop: Arc<AtomicBool>,
+    reader_handle: Option<std::thread::JoinHandle<()>>,
     stderr_buf: Arc<Mutex<String>>,
     stderr_handle: Option<std::thread::JoinHandle<()>>,
 }
@@ -175,6 +178,18 @@ impl Server {
         if let Some(h) = self.stderr_handle.take() {
             crate::code_provider::join_stderr_with_deadline(h);
         }
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.reader_stop.store(true, Ordering::Release);
+        #[cfg(unix)]
+        if let Some(handle) = self.reader_handle.take() {
+            let _ = handle.join();
+        }
+        #[cfg(not(unix))]
+        let _ = self.reader_handle.take();
     }
 }
 
@@ -234,17 +249,78 @@ fn start_server(turn: &Turn<'_>) -> Option<Server> {
         abandon(&mut child);
         return None;
     };
+    #[cfg(unix)]
+    if set_nonblocking(&stdin).is_err() {
+        abandon(&mut child);
+        return None;
+    }
     let stderr_buf = Arc::new(Mutex::new(String::new()));
-    let stderr_handle = child.stderr.take().map(|err| {
-        crate::code_provider::spawn_stderr_reader(err, Arc::clone(&stderr_buf))
-    });
-    // Lines arrive on a channel so the handshake can time out.
-    let (line_tx, lines) = std::sync::mpsc::channel::<String>();
-    std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            let Ok(line) = line else { break };
-            if line_tx.send(line).is_err() {
+    let stderr_handle = child
+        .stderr
+        .take()
+        .map(|err| crate::code_provider::spawn_stderr_reader(err, Arc::clone(&stderr_buf)));
+    // A small queue bounds memory; backpressure and reads remain cancellable.
+    const FRAME_CAP: usize = 1024 * 1024;
+    let (line_tx, lines) = std::sync::mpsc::sync_channel::<String>(4);
+    let output_overflow = Arc::new(AtomicBool::new(false));
+    let overflow = Arc::clone(&output_overflow);
+    let reader_stop = Arc::new(AtomicBool::new(false));
+    let stopped = Arc::clone(&reader_stop);
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let fd = stdout.as_raw_fd();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+            abandon(&mut child);
+            return None;
+        }
+    }
+    let reader_handle = std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut bytes = Vec::new();
+        loop {
+            if stopped.load(Ordering::Acquire) {
                 break;
+            }
+            let mut chunk = [0u8; 8192];
+            match reader.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    for &byte in &chunk[..n] {
+                        if byte == b'\n' {
+                            if bytes.last() == Some(&b'\r') {
+                                bytes.pop();
+                            }
+                            let Ok(mut line) = String::from_utf8(std::mem::take(&mut bytes)) else {
+                                return;
+                            };
+                            loop {
+                                match line_tx.try_send(line) {
+                                    Ok(()) => break,
+                                    Err(std::sync::mpsc::TrySendError::Full(pending)) => {
+                                        line = pending;
+                                        if stopped.load(Ordering::Acquire) {
+                                            return;
+                                        }
+                                        std::thread::sleep(Duration::from_millis(10));
+                                    }
+                                    Err(std::sync::mpsc::TrySendError::Disconnected(_)) => return,
+                                }
+                            }
+                        } else if bytes.len() == FRAME_CAP {
+                            overflow.store(true, Ordering::Release);
+                            return;
+                        } else {
+                            bytes.push(byte);
+                        }
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
             }
         }
     });
@@ -255,15 +331,34 @@ fn start_server(turn: &Turn<'_>) -> Option<Server> {
         pgid,
         stdin: Some(stdin),
         lines,
+        output_overflow,
+        reader_stop,
+        reader_handle: Some(reader_handle),
         stderr_buf,
         stderr_handle,
     })
+}
+
+/// Poll without releasing the Unix leader's pid reservation. Approval polling
+/// must leave reaping to the synchronized group-cleanup path.
+fn server_has_exited(child: &mut Child) -> bool {
+    #[cfg(unix)]
+    {
+        crate::proc_compat::child_has_exited(child.id())
+    }
+    #[cfg(windows)]
+    {
+        child.try_wait().ok().flatten().is_some()
+    }
 }
 
 /// End every ready server that has waited too long or has gone.
 fn expire_warm(pool: &mut Vec<Warm>) {
     let mut keep = Vec::with_capacity(pool.len());
     for mut w in pool.drain(..) {
+        #[cfg(unix)]
+        let alive = !server_has_exited(&mut w.server.child);
+        #[cfg(windows)]
         let alive = matches!(w.server.child.try_wait(), Ok(None));
         if alive && w.born.elapsed() < w.ttl {
             keep.push(w);
@@ -304,6 +399,10 @@ pub(crate) fn prewarm(turn: Turn<'_>) {
     let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
     let mut ok = send_lines(&mut server.stdin, &protocol.start());
     while ok && !protocol.thread_ready() && !protocol.finished() {
+        if Instant::now() >= deadline {
+            ok = false;
+            break;
+        }
         let left = deadline.saturating_duration_since(Instant::now());
         match server.lines.recv_timeout(left) {
             Ok(line) => {
@@ -428,13 +527,22 @@ pub(crate) fn run_turn(
     tx: &async_channel::Sender<ProviderEvent>,
     session_slot: &crate::code_provider::SessionSlot,
     termination_observed: &Option<Arc<AtomicBool>>,
+    approval_session: crate::codex_approval::Session,
 ) -> Result<Vec<ProviderEvent>, Receiver<()>> {
     // RC2-R2F10: a server made ready for this launch takes the question at
     // once, on the thread it already opened.
     if turn.spec.resume_id.is_none() {
         if let Some(mut warm) = take_warm(&WarmKey::of(&turn)) {
             let ask = warm.protocol.ask(turn.spec.prompt.clone());
-            if !ask.is_empty() && send_lines(&mut warm.server.stdin, &ask) {
+            let mut cancelled = false;
+            if !ask.is_empty()
+                && send_lines_cancellable(
+                    &mut warm.server.stdin,
+                    &ask,
+                    Some(&cancel_rx),
+                    &mut cancelled,
+                )
+            {
                 if let (Some(id), Ok(mut slot)) = (warm.protocol.thread_id(), session_slot.lock()) {
                     *slot = Some(id.to_string());
                 }
@@ -445,24 +553,44 @@ pub(crate) fn run_turn(
                     tx,
                     session_slot,
                     termination_observed,
+                    approval_session,
+                    turn.spec.host_approvals
+                        && turn.spec.autonomy == awili_code::Autonomy::Autonomous,
                 ));
             }
             warm.server.abandon();
+            if cancelled {
+                if let Some(observation) = termination_observed {
+                    observation.store(true, Ordering::Release);
+                }
+                return Ok(crate::code_provider::finalize(None, false, ""));
+            }
         }
     }
     let Some(mut server) = start_server(&turn) else {
         // The exec path spawns the same binary and reports why it cannot.
         return Err(cancel_rx);
     };
+    let allow_approvals =
+        turn.spec.host_approvals && turn.spec.autonomy == awili_code::Autonomy::Autonomous;
     let mut protocol = AppServerTurn::new(turn.spec);
 
     // The handshake: `initialize` answered, or this Codex has no app server.
     // Stop is watched here too (a hung server is waited on for up to
     // HANDSHAKE_TIMEOUT): it ends the turn as stopped, with no fallback.
     let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
-    let mut ready = send_lines(&mut server.stdin, &protocol.start());
     let mut stopped = false;
+    let mut ready = send_lines_cancellable(
+        &mut server.stdin,
+        &protocol.start(),
+        Some(&cancel_rx),
+        &mut stopped,
+    );
     while ready && protocol.handshake() == Handshake::Pending {
+        if Instant::now() >= deadline {
+            ready = false;
+            break;
+        }
         if !matches!(cancel_rx.try_recv(), Err(TryRecvError::Empty)) {
             stopped = true;
             break;
@@ -473,7 +601,12 @@ pub(crate) fn run_turn(
                 // Nothing is shown before the handshake ends (`initialize`
                 // answers carry no events).
                 let step = protocol.on_line(&line);
-                ready = send_lines(&mut server.stdin, &step.send);
+                ready = send_lines_cancellable(
+                    &mut server.stdin,
+                    &step.send,
+                    Some(&cancel_rx),
+                    &mut stopped,
+                );
             }
             Err(RecvTimeoutError::Timeout) => ready = Instant::now() < deadline,
             Err(RecvTimeoutError::Disconnected) => ready = false,
@@ -497,12 +630,15 @@ pub(crate) fn run_turn(
         tx,
         session_slot,
         termination_observed,
+        approval_session,
+        allow_approvals,
     ))
 }
 
 /// The turn runs on `server` (its handshake done): streamed events out on
 /// `tx`, the terminal ones returned. Stop kills the group, as on the exec
 /// path.
+#[allow(clippy::too_many_arguments)] // Keep process, cancellation and approval authority explicit.
 fn drive(
     mut server: Server,
     mut protocol: AppServerTurn,
@@ -510,6 +646,8 @@ fn drive(
     tx: &async_channel::Sender<ProviderEvent>,
     session_slot: &crate::code_provider::SessionSlot,
     termination_observed: &Option<Arc<AtomicBool>>,
+    approval_session: crate::codex_approval::Session,
+    allow_approvals: bool,
 ) -> Vec<ProviderEvent> {
     let mut emitted_error = false;
     let forward = |events: Vec<CodeEvent>, emitted_error: &mut bool| -> bool {
@@ -525,7 +663,7 @@ fn drive(
                 Some(ProviderEvent::Done) | None => {}
                 Some(other) => {
                     *emitted_error |= matches!(other, ProviderEvent::Error(_));
-                    if tx.send_blocking(other).is_err() {
+                    if crate::code_provider::send_native_event(tx, other).is_err() {
                         return false;
                     }
                 }
@@ -545,14 +683,84 @@ fn drive(
             crate::code_provider::kill_process_group(pgid);
         }
     });
+    let mut deferred = std::collections::VecDeque::new();
     while !protocol.finished() {
         // A killed server (Stop) ends its stdout: the loop ends with it.
-        let Ok(line) = server.lines.recv() else { break };
+        let line = if let Some(line) = deferred.pop_front() {
+            line
+        } else {
+            match server.lines.recv_timeout(HANDSHAKE_POLL) {
+                Ok(line) => line,
+                Err(RecvTimeoutError::Timeout) if !server_has_exited(&mut server.child) => continue,
+                Err(_) => break,
+            }
+        };
+        if allow_approvals {
+            if let Some(request) = crate::codex_approval::Request::parse(
+                &line,
+                protocol.thread_id(),
+                protocol.turn_id(),
+            ) {
+                let mut cancelled = false;
+                let mut backlog_overflow = false;
+                let reply = crate::codex_approval::resolve(&request, &approval_session, tx, || {
+                    while deferred.len() < 4 {
+                        let Ok(line) = server.lines.try_recv() else {
+                            break;
+                        };
+                        cancelled |= request.cancelled_by(&line);
+                        deferred.push_back(line);
+                    }
+                    if deferred.len() == 4 {
+                        if let Ok(line) = server.lines.try_recv() {
+                            cancelled |= request.cancelled_by(&line);
+                            deferred.push_back(line);
+                            backlog_overflow = true;
+                        }
+                    }
+                    cancelled || backlog_overflow || server_has_exited(&mut server.child)
+                });
+                if backlog_overflow {
+                    emitted_error = true;
+                    let _ = crate::code_provider::send_native_event(
+                        tx,
+                        ProviderEvent::Error(
+                            "Codex produced too much output while approval was pending".into(),
+                        ),
+                    );
+                    break;
+                }
+                if !send_lines(&mut server.stdin, &[reply]) {
+                    emitted_error = true;
+                    let _ = crate::code_provider::send_native_event(
+                        tx,
+                        ProviderEvent::Error("Could not send the Codex approval response".into()),
+                    );
+                    break;
+                }
+                continue;
+            }
+        }
         let step = protocol.on_line(&line);
-        send_lines(&mut server.stdin, &step.send);
-        if !forward(step.events, &mut emitted_error) {
+        if !step.send.is_empty() && !send_lines(&mut server.stdin, &step.send) {
+            emitted_error = true;
+            let _ = crate::code_provider::send_native_event(
+                tx,
+                ProviderEvent::Error("Could not send the Codex protocol response".into()),
+            );
             break;
         }
+        if !forward(step.events, &mut emitted_error) {
+            emitted_error = true;
+            break;
+        }
+    }
+    if server.output_overflow.load(Ordering::Acquire) {
+        emitted_error = true;
+        let _ = crate::code_provider::send_native_event(
+            tx,
+            ProviderEvent::Error("Codex output frame exceeded the size limit".into()),
+        );
     }
     // Closing stdin ends the server; one that lingers is killed.
     drop(server.stdin.take());
@@ -608,18 +816,60 @@ fn spawn_retrying_busy(cmd: &mut Command) -> Option<Child> {
     None
 }
 
-/// Write `lines` to the server; false once its stdin is gone.
+#[cfg(unix)]
+fn set_nonblocking(pipe: &ChildStdin) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let fd = pipe.as_raw_fd();
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Write with a bounded deadline; warmed and handshake writes also observe Stop.
 fn send_lines(stdin: &mut Option<ChildStdin>, lines: &[String]) -> bool {
+    send_lines_cancellable(stdin, lines, None, &mut false)
+}
+
+fn send_lines_cancellable(
+    stdin: &mut Option<ChildStdin>,
+    lines: &[String],
+    cancel: Option<&Receiver<()>>,
+    stopped: &mut bool,
+) -> bool {
     let Some(pipe) = stdin.as_mut() else {
         return false;
     };
+    let deadline = Instant::now() + Duration::from_secs(2);
     for line in lines {
-        if pipe.write_all(line.as_bytes()).is_err()
-            || pipe.write_all(b"\n").is_err()
-            || pipe.flush().is_err()
-        {
-            *stdin = None;
-            return false;
+        for part in [line.as_bytes(), b"\n".as_slice()] {
+            let mut rest = part;
+            while !rest.is_empty() {
+                if cancel.is_some_and(|rx| !matches!(rx.try_recv(), Err(TryRecvError::Empty))) {
+                    *stopped = true;
+                    *stdin = None;
+                    return false;
+                }
+                match pipe.write(rest) {
+                    Ok(0) => {
+                        *stdin = None;
+                        return false;
+                    }
+                    Ok(n) => rest = &rest[n..],
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e)
+                        if e.kind() == std::io::ErrorKind::WouldBlock
+                            && Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(10))
+                    }
+                    Err(_) => {
+                        *stdin = None;
+                        return false;
+                    }
+                }
+            }
         }
     }
     true

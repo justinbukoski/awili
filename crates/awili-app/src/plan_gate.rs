@@ -1558,15 +1558,26 @@ mod tests {
             let (_, opened) = app.work.plan_gates.settle(&key, &plan_text(), true);
             assert!(!opened, "a stopped planning step never opens a card");
 
-            // A new message replaces the plan (no folder: nothing is spawned).
+            // A missing bound folder is a deterministic preflight refusal. An
+            // absent folder is allowed for some targets and can start a real
+            // provider thread, which is not needed for this plan-state test.
             open_plan(&mut app.work.plan_gates, &key);
-            app.work.folder = None;
-            app.submit_work_run("something else".into(), cx);
+            app.work.folder = Some(home.join("missing-work-folder"));
+            let before = app.work.run_seq;
+            assert!(!app.submit_work_run_kind(
+                "something else".into(), CONV.into(),
+                awili_core::MessageKind::Normal, cx,
+            ));
+            assert!(app.work.panel.error.is_some(), "missing-folder preflight refused the message");
+            assert_eq!(app.work.run_seq, before, "no provider was dispatched");
+            assert!(texts(app).is_empty(), "refusal added no transcript rows");
             assert!(
                 !app.plan_gate_pending_here(),
                 "a new message clears the plan"
             );
             assert!(app.work.plan_gates.open_for(&key).is_none());
+            app.resolve_work_approval(ApprovalDecision::Approve, cx);
+            assert_eq!(app.work.run_seq, before, "the replaced plan cannot be approved");
         });
     }
 

@@ -371,6 +371,18 @@ fn keystroke_to_bytes(ks: &gpui::Keystroke) -> Option<Vec<u8>> {
         _ => {}
     }
 
+    // GPUI normalizes the binding key; key_char retains Shift, Caps Lock and
+    // composed text as entered by the user.
+    if !ks.modifiers.platform && !ks.modifiers.control {
+        if let Some(text) = ks
+            .key_char
+            .as_ref()
+            .filter(|s| !s.is_empty() && !s.chars().any(char::is_control))
+        {
+            return Some(text.as_bytes().to_vec());
+        }
+    }
+
     // Regular printable characters.
     if ks.key.len() == 1 && !ks.modifiers.platform && !ks.modifiers.control {
         return Some(ks.key.as_bytes().to_vec());
@@ -443,6 +455,21 @@ mod tests {
             key_char: None,
         };
         assert_eq!(keystroke_to_bytes(&up), Some(b"\x1b[A".to_vec()));
+    }
+
+    #[test]
+    fn shifted_and_caps_text_preserves_uppercase() {
+        for shift in [false, true] {
+            let ks = gpui::Keystroke {
+                key: "a".into(),
+                key_char: Some("A".into()),
+                modifiers: gpui::Modifiers {
+                    shift,
+                    ..Default::default()
+                },
+            };
+            assert_eq!(keystroke_to_bytes(&ks), Some(b"A".to_vec()));
+        }
     }
 
     #[test]

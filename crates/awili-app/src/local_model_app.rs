@@ -197,6 +197,7 @@ impl crate::AwiliApp {
             return;
         }
         let url = self.work.engine.base_url.clone();
+        let api_key = self.work.engine.api_key.clone();
         // L1e2a-FIX1: the answer is tied to the endpoint it checked.
         let gen = self.work.local.endpoint_gen;
         let (tx, rx) = async_channel::bounded::<Result<(), String>>(1);
@@ -208,7 +209,7 @@ impl crate::AwiliApp {
             return self.deliver_local_probe(gen, rx, cx);
         }
         std::thread::spawn(move || {
-            let _ = tx.send_blocking(probe_model_endpoint(&url, PROBE_TIMEOUT));
+            let _ = tx.send_blocking(probe_model_endpoint(&url, Some(&api_key), PROBE_TIMEOUT));
         });
         self.deliver_local_probe(gen, rx, cx);
     }

@@ -262,7 +262,7 @@ fn s7c_oversized_body_is_refused() {
     }
 }
 
-/// A non-2xx body over the cap keeps its status and is cut to the cap.
+/// A non-2xx body over the cap keeps its status and suppresses the partial body.
 #[test]
 fn s7c_oversized_error_body_keeps_status_and_is_cut() {
     let (base, _rx) = answering(
@@ -273,7 +273,7 @@ fn s7c_oversized_error_body_keeps_status_and_is_cut() {
     match client.job("j1") {
         Err(CcdError::Http { status, body }) => {
             assert_eq!(status, 500);
-            assert_eq!(body.len() as u64, MAX_CCD_BODY_BYTES);
+            assert_eq!(body, "response body exceeds size limit");
         }
         other => panic!("expected Http 500, got {other:?}"),
     }
@@ -306,4 +306,22 @@ fn s7c_reader_stops_at_the_cap() {
         src.consumed, 1001,
         "the reader must stop one byte past the cap"
     );
+}
+
+#[test]
+fn error_diagnostics_redact_synthetic_credentials_on_500_and_404() {
+    for status in [500, 404] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = [0; 4096]; let _ = sock.read(&mut buf);
+            let body = "reflected synthetic-token and Bearer\tsecond-credential";
+            write!(sock, "HTTP/1.1 {status} test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        });
+        let error = CcdClient::with_timeouts(base, "synthetic-token", short()).job("j1").unwrap_err();
+        let shown = format!("{error} {error:?}");
+        assert!(!shown.contains("synthetic-token"));
+        assert!(!shown.contains("second-credential"));
+    }
 }

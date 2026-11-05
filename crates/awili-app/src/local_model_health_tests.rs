@@ -54,13 +54,13 @@ fn checked(result: Result<(), String>, at: Instant) -> LocalModelHealth {
 #[test]
 fn l1e1_probe_hits_v1_models() {
     let (url, rx) = stub("200 OK");
-    assert_eq!(probe_model_endpoint(&url, PROBE_TIMEOUT), Ok(()));
+    assert_eq!(probe_model_endpoint(&url, None, PROBE_TIMEOUT), Ok(()));
     let line = rx.recv_timeout(Duration::from_secs(3)).unwrap();
     assert!(line.starts_with("GET /v1/models "), "{line}");
 
     let (url, rx) = stub("200 OK");
     assert_eq!(
-        probe_model_endpoint(&format!("{url}/"), PROBE_TIMEOUT),
+        probe_model_endpoint(&format!("{url}/"), None, PROBE_TIMEOUT),
         Ok(())
     );
     let line = rx.recv_timeout(Duration::from_secs(3)).unwrap();
@@ -76,14 +76,14 @@ fn l1e1_probe_hits_v1_models() {
 fn l1e1_probe_errors() {
     let (url, _rx) = stub("404 Not Found");
     assert_eq!(
-        probe_model_endpoint(&url, PROBE_TIMEOUT),
+        probe_model_endpoint(&url, None, PROBE_TIMEOUT),
         Err("HTTP 404".to_string())
     );
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let dead = format!("http://{}", listener.local_addr().unwrap());
     drop(listener);
     let started = Instant::now();
-    let err = probe_model_endpoint(&dead, PROBE_TIMEOUT).unwrap_err();
+    let err = probe_model_endpoint(&dead, None, PROBE_TIMEOUT).unwrap_err();
     assert!(!err.is_empty());
     assert!(
         started.elapsed() < Duration::from_secs(4),
@@ -315,20 +315,25 @@ fn rc2gemma5_a_server_whose_health_says_503_is_down() {
     assert_eq!(
         probe_model_endpoint(
             &stub_paths("200 OK", Some("503 Service Unavailable")),
+            None,
             PROBE_TIMEOUT
         ),
         Err(NOT_WORKING.to_string())
     );
     assert_eq!(
-        probe_model_endpoint(&stub_paths("200 OK", Some("200 OK")), PROBE_TIMEOUT),
+        probe_model_endpoint(&stub_paths("200 OK", Some("200 OK")), None, PROBE_TIMEOUT),
         Ok(())
     );
     assert_eq!(
-        probe_model_endpoint(&stub_paths("200 OK", None), PROBE_TIMEOUT),
+        probe_model_endpoint(&stub_paths("200 OK", None), None, PROBE_TIMEOUT),
         Ok(())
     );
     assert_eq!(
-        probe_model_endpoint(&stub_paths("404 Not Found", Some("200 OK")), PROBE_TIMEOUT),
+        probe_model_endpoint(
+            &stub_paths("404 Not Found", Some("200 OK")),
+            None,
+            PROBE_TIMEOUT
+        ),
         Err("HTTP 404".to_string())
     );
     assert_eq!(health_url(" http://h:1/ "), "http://h:1/health");
@@ -338,4 +343,31 @@ fn rc2gemma5_a_server_whose_health_says_503_is_down() {
         false,
     );
     assert!(card.contains("it may need a restart"), "{card}");
+}
+
+#[test]
+fn probe_sends_bearer_without_following_redirects() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut data = [0; 4096];
+        let n = stream.read(&mut data).unwrap();
+        tx.send(String::from_utf8_lossy(&data[..n]).to_ascii_lowercase())
+            .unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/\r\nContent-Length: 0\r\n\r\n",
+            )
+            .unwrap();
+    });
+    assert_eq!(
+        probe_model_endpoint(&url, Some("test-secret"), PROBE_TIMEOUT),
+        Err("HTTP 302".into())
+    );
+    assert!(rx
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap()
+        .contains("authorization: bearer test-secret"));
 }

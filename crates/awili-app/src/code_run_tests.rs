@@ -1182,3 +1182,28 @@ fn code_retry_shift_tab_then_enter_runs_the_retry(cx: &mut gpui::TestAppContext)
         );
     });
 }
+
+#[gpui::test]
+fn native_host_approval_buttons_answer_only_their_live_request(cx: &mut gpui::TestAppContext) {
+    let Some(home) = isolated("code_run::code_run_tests::native_host_approval_buttons_answer_only_their_live_request") else { return; };
+    let (app, window, _) = code_app(cx, &home, SLEEPS);
+    for (selector, choice) in [
+        ("host-approve-once", awili_providers::ApprovalChoice::Once),
+        ("host-approve-session", awili_providers::ApprovalChoice::Session),
+        ("host-approve-deny", awili_providers::ApprovalChoice::Deny),
+    ] {
+        let (prompt, rx) = awili_providers::HostApproval::channel("Capture the whole screen?".into(), "desktop.screenshot · allScreens: true".into(), true);
+        app.update(window, |app, cx| {
+            let active = app.work.code_active;
+            app.work.code_tabs[active].host_approval = Some(prompt.clone());
+            cx.notify();
+        });
+        window.run_until_parked();
+        let bounds = window.debug_bounds(selector).expect("visible native approval control");
+        assert!(bounds.size.height >= crate::theme::target());
+        click(window, selector);
+        assert_eq!(rx.try_recv().unwrap(), choice);
+        assert!(!prompt.active());
+        assert!(window.debug_bounds("host-approve-once").is_none(), "resolved card disappears");
+    }
+}

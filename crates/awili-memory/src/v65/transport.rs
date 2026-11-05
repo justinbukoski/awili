@@ -284,8 +284,10 @@ pub(super) fn post(client: &MemoryClient, token: &str, path: &str, body: &Value)
         return PostOutcome::Transport;
     };
     let status = resp.status().as_u16();
-    let Ok(text) = resp.text() else {
-        return PostOutcome::Transport;
+    let text = match crate::bounded_response(resp) {
+        Ok(text) => text,
+        Err(crate::MemoryError::Parse(message)) => return PostOutcome::BadBody(message),
+        Err(_) => return PostOutcome::Transport,
     };
     if (200..300).contains(&status) {
         return match serde_json::from_str::<Value>(&text) {
@@ -310,6 +312,31 @@ pub(super) fn parse<T: serde::de::DeserializeOwned>(v: Value) -> Result<T, V65Er
 #[cfg(test)]
 mod rc2svc1_tests {
     use super::*;
+
+    #[test]
+    fn post_caps_success_and_error_responses_without_length() {
+        use std::io::{Read, Write};
+        for status in [200, 500] {
+            for excess in [false, true] {
+                let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let addr = listener.local_addr().unwrap();
+                let server = std::thread::spawn(move || {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let mut req = [0; 8192]; let _ = stream.read(&mut req);
+                    let size = crate::MAX_HTTP_BODY as usize + usize::from(excess);
+                    let mut body = vec![b' '; size]; body[0] = b'{'; body[1] = b'}';
+                    write!(stream, "HTTP/1.1 {status} test\r\nConnection: close\r\n\r\n").unwrap();
+                    let _ = stream.write_all(&body);
+                });
+                let client = crate::MemoryClient::new(format!("http://{addr}"), 90);
+                let result = post(&client, "synthetic-token", "v6/test", &serde_json::json!({}));
+                if excess { assert!(matches!(result, PostOutcome::BadBody(ref text) if text.contains("size limit"))); }
+                else if status == 200 { assert!(matches!(result, PostOutcome::Ok(_))); }
+                else { assert!(matches!(result, PostOutcome::Rejected(_))); }
+                server.join().unwrap();
+            }
+        }
+    }
 
     /// RC2-SVC1 (T23): the request's own token and any `Bearer <x>` run are
     /// redacted, case-insensitively, and BEFORE the length bound — a token

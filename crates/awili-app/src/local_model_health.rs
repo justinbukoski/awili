@@ -31,15 +31,23 @@ pub(crate) fn models_url(base_url: &str) -> String {
 /// and no redirects. A 2xx is `Ok` unless the server's `/health` answers 503
 /// (`Err(NOT_WORKING)`, R7-A3 (RC2)); any other status is `Err("HTTP <code>")`;
 /// a transport error is `Err(<error display>)`.
-pub(crate) fn probe_model_endpoint(base_url: &str, timeout: Duration) -> Result<(), String> {
+pub(crate) fn probe_model_endpoint(
+    base_url: &str,
+    api_key: Option<&str>,
+    timeout: Duration,
+) -> Result<(), String> {
     let client = reqwest::blocking::Client::builder()
         .timeout(timeout)
         .connect_timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| e.to_string())?;
-    let response = client
-        .get(models_url(base_url))
+    let authorize =
+        |request: reqwest::blocking::RequestBuilder| match api_key.filter(|k| !k.is_empty()) {
+            Some(key) => request.bearer_auth(key),
+            None => request,
+        };
+    let response = authorize(client.get(models_url(base_url)))
         .send()
         .map_err(|e| e.to_string())?;
     let status = response.status();
@@ -50,8 +58,7 @@ pub(crate) fn probe_model_endpoint(base_url: &str, timeout: Duration) -> Result<
     // generation thread has died (it never touches it); `/health` then says
     // 503. A server without `/health` (404, or no answer) is judged by
     // `/v1/models` alone, as before.
-    let broken = client
-        .get(health_url(base_url))
+    let broken = authorize(client.get(health_url(base_url)))
         .send()
         .is_ok_and(|r| r.status().as_u16() == 503);
     if broken {

@@ -19,9 +19,36 @@ use std::io::{BufRead, BufReader, Read};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use awili_code::{Autonomy, CodeEngine};
 use awili_providers::{ChatRequest, ProviderEvent, Role};
+
+/// Keep two queue slots for a terminal error and Done if the consumer cannot
+/// keep up. Each event originates in a size-limited native protocol frame.
+pub(crate) fn send_native_event(tx: &async_channel::Sender<ProviderEvent>, mut event: ProviderEvent) -> Result<(), ()> {
+    // Reserve two slots for the overflow error and post-reap Done. Backpressure
+    // tolerates ordinary bursts, but cannot pin a stopped or abandoned turn.
+    if event == ProviderEvent::Done { return tx.try_send(event).map_err(|_| ()); }
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        if tx.is_closed() { return Err(()); }
+        if tx.len() < 128 {
+            match tx.try_send(event) {
+                Ok(()) => return Ok(()),
+                Err(async_channel::TrySendError::Full(pending)) => event = pending,
+                Err(async_channel::TrySendError::Closed(_)) => return Err(()),
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            if tx.len() < 129 {
+                let _ = tx.try_send(ProviderEvent::Error("Native output exceeded the pending event limit".into()));
+            }
+            return Err(());
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
 
 /// A shared cell the driver fills with the engine's session/thread id the first
 /// time it sees one, so the next turn can resume that conversation. The Code tab
@@ -83,6 +110,7 @@ pub struct CodeProvider {
     council: Option<String>,
     /// rc.4 S7: `[work.sandbox]`; default OFF (the launch is then unchanged).
     sandbox: awili_config::SandboxConfig,
+    approval_session: Option<crate::codex_approval::Session>,
 }
 
 impl CodeProvider {
@@ -112,7 +140,13 @@ impl CodeProvider {
             agents_md: None,
             council: None,
             sandbox: awili_config::SandboxConfig::default(),
+            approval_session: None,
         }
+    }
+
+    pub(crate) fn with_approval_session(mut self, session: crate::codex_approval::Session) -> Self {
+        self.approval_session = Some(session);
+        self
     }
 
     /// Hand the `[work.agents.memory]` section to the launch.
@@ -217,7 +251,8 @@ impl CodeProvider {
         cancel_rx: std::sync::mpsc::Receiver<()>,
         warm_for: Option<String>,
     ) -> async_channel::Receiver<ProviderEvent> {
-        let (tx, rx) = async_channel::unbounded::<ProviderEvent>();
+        let (tx, rx) = async_channel::bounded::<ProviderEvent>(130);
+        let approval_session = self.approval_session.clone();
         let termination_observed = self.termination_observed.clone();
         let exec_observed = self.exec_observed.clone();
         let bin = self.bin.clone();
@@ -265,6 +300,7 @@ impl CodeProvider {
                 warm_only,
                 council,
                 sandbox,
+                approval_session,
             );
         });
 
@@ -771,7 +807,9 @@ fn run_code_stream(
     warm_only: bool,
     council: Option<String>,
     sandbox: awili_config::SandboxConfig,
+    approval_session: Option<crate::codex_approval::Session>,
 ) {
+
     // RC2-R2F10: only a Codex server can be made ready ahead (RC2-R2G5,
     // RC2-R2I: for `council`, the council it is made for). RC2-R3: and a
     // council's Claude member (`claude_warm`).
@@ -822,7 +860,7 @@ fn run_code_stream(
                 None,
                 vec![ProviderEvent::Error(message), ProviderEvent::Done],
                 |ev| {
-                    let _ = tx.send_blocking(ev);
+                    let _ = send_native_event(&tx, ev);
                 },
             );
             return;
@@ -881,6 +919,7 @@ fn run_code_stream(
     let cancel_rx =
         if engine == CodeEngine::Codex && !crate::codex_app_server::exec_fallback_for(&bin) {
             let mut server_args = engine.app_server_args(autonomy);
+            if approval_session.is_some() { server_args.extend(["-c".into(), "approvals_reviewer=\"user\"".into()]); }
             server_args.extend(launch.args.iter().cloned());
             if let Some(spec) = &connectors_mcp {
                 server_args.extend(codex_connector_overrides(spec));
@@ -900,6 +939,7 @@ fn run_code_stream(
                     resume_id: resume_id.clone(),
                     model: model.clone(),
                     autonomy,
+                    host_approvals: approval_session.is_some(),
                 },
             };
             // RC2-R2F10: made ready for a later question, not run.
@@ -913,10 +953,11 @@ fn run_code_stream(
                 &tx,
                 &session_slot,
                 &termination_observed,
+                approval_session.unwrap_or_default(),
             ) {
                 Ok(events) => {
                     end_turn(None, events, |ev| {
-                        let _ = tx.send_blocking(ev);
+                        let _ = send_native_event(&tx, ev);
                     });
                     return;
                 }
@@ -925,8 +966,17 @@ fn run_code_stream(
         } else {
             cancel_rx
         };
+    // Legacy exec Autonomous bypasses Codex approvals and sandbox entirely;
+    // it cannot preserve app-server's on-request/auto-review contract.
+    if engine == CodeEngine::Codex && autonomy == awili_code::Autonomy::Autonomous {
+        end_turn(None, vec![
+            ProviderEvent::Error("Codex app-server is required for Autonomous mode. Update Codex and try again.".into()),
+            ProviderEvent::Done,
+        ], |ev| { let _ = send_native_event(&tx, ev); });
+        return;
+    }
     if image_input && engine != CodeEngine::Claude && current_request_has_images(&prompt) {
-        end_turn(None, vec![ProviderEvent::Error("This native harness cannot accept image input here. Use Codex with app-server or Claude, or an in-app vision model.".into()), ProviderEvent::Done], |ev| { let _ = tx.send_blocking(ev); });
+        end_turn(None, vec![ProviderEvent::Error("This native harness cannot accept image input here. Use Codex with app-server or Claude, or an in-app vision model.".into()), ProviderEvent::Done], |ev| { let _ = send_native_event(&tx, ev); });
         return;
     }
     if image_input && engine == CodeEngine::Codex {
@@ -1040,7 +1090,7 @@ fn run_code_stream(
                     mcp_config_guard,
                     vec![ProviderEvent::Error(message), ProviderEvent::Done],
                     |ev| {
-                        let _ = tx.send_blocking(ev);
+                        let _ = send_native_event(&tx, ev);
                     },
                 );
                 return;
@@ -1202,7 +1252,7 @@ fn run_code_stream(
                     ProviderEvent::Done,
                 ],
                 |ev| {
-                    let _ = tx.send_blocking(ev);
+                    let _ = send_native_event(&tx, ev);
                 },
             );
             return;
@@ -1254,24 +1304,85 @@ fn run_code_stream(
     // buffer stdout, parse at EOF, and feed the events through the same pump.
     let mut whole_buf = String::new();
     if let Some(stdout) = stdout {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            let Ok(line) = line else { break };
+        #[allow(unused_mut)]
+        let mut output_ready = true;
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            let fd = stdout.as_raw_fd();
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+                emitted_error = true;
+                output_ready = false;
+                let _ = send_native_event(&tx, ProviderEvent::Error("Could not configure native output pipe".into()));
+                let _guard = reap_guard.lock().unwrap_or_else(|e| e.into_inner());
+                kill_process_group(pgid);
+            }
+        }
+        let mut reader = BufReader::new(stdout);
+        #[cfg(unix)]
+        let mut exited_at: Option<std::time::Instant> = None;
+        if output_ready {
+        loop {
+            const FRAME_CAP: u64 = 4 * 1024 * 1024;
+            let mut bytes = Vec::new();
+            #[cfg(unix)]
+            let read = loop {
+                let remaining = (FRAME_CAP + 1).saturating_sub(bytes.len() as u64);
+                match (&mut reader).take(remaining).read_until(b'\n', &mut bytes) {
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if exited_at.is_none() && crate::proc_compat::child_exit_observed(child.id()).unwrap_or(false) {
+                            // waitid(WNOWAIT) keeps the group leader reserved until reap.
+                            let _guard = reap_guard.lock().unwrap_or_else(|e| e.into_inner());
+                            kill_process_group(pgid);
+                            exited_at = Some(std::time::Instant::now());
+                        }
+                        if exited_at.is_some_and(|at| at.elapsed() >= Duration::from_millis(250)) {
+                            break Ok(bytes.len());
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    result => break result.map(|n| if n == 0 && !bytes.is_empty() { bytes.len() } else { n }),
+                }
+            };
+            #[cfg(not(unix))]
+            let read = (&mut reader).take(FRAME_CAP + 1).read_until(b'\n', &mut bytes);
+            match read {
+                Ok(0) => break,
+                Ok(_) if bytes.len() as u64 > FRAME_CAP => {
+                    emitted_error = true;
+                    let _ = send_native_event(&tx, ProviderEvent::Error("Native output frame exceeded the size limit".into()));
+                    let _guard = reap_guard.lock().unwrap_or_else(|e| e.into_inner());
+                    kill_process_group(pgid);
+                    break;
+                }
+                Ok(_) => {},
+                Err(_) => break,
+            }
+            if bytes.last() == Some(&b'\n') { bytes.pop(); }
+            if bytes.last() == Some(&b'\r') { bytes.pop(); }
+            let Ok(line) = String::from_utf8(bytes) else { break };
             if engine.buffers_whole_output() {
                 // Bounded (ocr/codex review R2): the envelope is small; a
                 // runaway child cannot balloon memory. 4MB keeps any sane
                 // response with headroom; beyond it we keep the head (the
                 // envelope precedes nothing) and stop accumulating.
                 const WHOLE_BUF_CAP: usize = 4 * 1024 * 1024;
-                if whole_buf.len() < WHOLE_BUF_CAP {
-                    whole_buf.push_str(&line);
-                    whole_buf.push('\n');
+                if whole_buf.len().saturating_add(line.len()).saturating_add(1) > WHOLE_BUF_CAP {
+                    emitted_error = true;
+                    let _ = send_native_event(&tx, ProviderEvent::Error("Native output exceeded the size limit".into()));
+                    let _guard = reap_guard.lock().unwrap_or_else(|e| e.into_inner());
+                    kill_process_group(pgid);
+                    break;
                 }
+                whole_buf.push_str(&line);
+                whole_buf.push('\n');
                 continue;
             }
             if engine == CodeEngine::Claude {
                 trace_claude_terminal(&line);
             }
+            let mut delivery_failed = false;
             for ev in parser.parse_line(&line) {
                 // exec JSON does not provide an attributable resume baseline;
                 // retain unknown usage rather than replaying thread totals.
@@ -1296,18 +1407,27 @@ fn run_code_stream(
                     Some(ProviderEvent::Done) => {}
                     Some(ProviderEvent::Error(e)) => {
                         emitted_error = true;
-                        if tx.send_blocking(ProviderEvent::Error(e)).is_err() {
+                        if send_native_event(&tx, ProviderEvent::Error(e)).is_err() {
+                            delivery_failed = true;
                             break;
                         }
                     }
                     Some(other) => {
-                        if tx.send_blocking(other).is_err() {
+                        if send_native_event(&tx, other).is_err() {
+                            delivery_failed = true;
                             break;
                         }
                     }
                     None => {}
                 }
             }
+            if delivery_failed || tx.is_closed() {
+                emitted_error = true;
+                let _guard = reap_guard.lock().unwrap_or_else(|e| e.into_inner());
+                kill_process_group(pgid);
+                break;
+            }
+        }
         }
     }
     // Empty stdout from a whole-output engine is a FAILURE, not a clean empty
@@ -1319,7 +1439,7 @@ fn run_code_stream(
             &dsh_env_note,
             "engine produced no output — the turn failed".to_string(),
         );
-        let _ = tx.send_blocking(ProviderEvent::Error(msg));
+        let _ = send_native_event(&tx, ProviderEvent::Error(msg));
     }
     if engine.buffers_whole_output() && !whole_buf.trim().is_empty() {
         for ev in engine.parse_whole(&whole_buf) {
@@ -1334,10 +1454,10 @@ fn run_code_stream(
                 Some(ProviderEvent::Error(e)) => {
                     emitted_error = true;
                     let e = with_dsh_env_note(&dsh_env_note, e);
-                    let _ = tx.send_blocking(ProviderEvent::Error(e));
+                    let _ = send_native_event(&tx, ProviderEvent::Error(e));
                 }
                 Some(other) => {
-                    let _ = tx.send_blocking(other);
+                    let _ = send_native_event(&tx, other);
                 }
                 None => {}
             }
@@ -1386,7 +1506,7 @@ fn run_code_stream(
         })
         .collect();
     end_turn(mcp_config_guard, events, |ev| {
-        let _ = tx.send_blocking(ev);
+        let _ = send_native_event(&tx, ev);
     });
 }
 
@@ -1733,6 +1853,80 @@ mod tests {
     use awili_providers::ChatMessage;
 
     #[test]
+    fn bounded_events_backpressure_allows_bursts_and_reserves_terminal() {
+        let (tx, rx) = async_channel::bounded(130);
+        let worker = std::thread::spawn(move || {
+            for _ in 0..1000 { send_native_event(&tx, ProviderEvent::Token("x".into())).unwrap(); }
+            send_native_event(&tx, ProviderEvent::Done).unwrap();
+        });
+        let mut count = 0;
+        loop {
+            match rx.recv_blocking().unwrap() {
+                ProviderEvent::Token(_) => { count += 1; std::thread::sleep(Duration::from_millis(1)); },
+                ProviderEvent::Done => break,
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        worker.join().unwrap();
+        assert_eq!(count, 1000);
+
+        let (tx, rx) = async_channel::bounded(130);
+        for _ in 0..128 { send_native_event(&tx, ProviderEvent::Token("x".into())).unwrap(); }
+        let start = std::time::Instant::now();
+        assert!(send_native_event(&tx, ProviderEvent::Token("overflow".into())).is_err());
+        assert!(start.elapsed() < Duration::from_secs(2));
+        send_native_event(&tx, ProviderEvent::Done).unwrap();
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert!(matches!(&events[128], ProviderEvent::Error(s) if s.contains("pending event limit")));
+        assert_eq!(events[129], ProviderEvent::Done);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exited_native_leader_with_inherited_stdout_finishes() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("fake-claude");
+        crate::exec_fixture::write_exec_fixture(&bin, "#!/bin/sh\nsleep 30 &\nexit 0\n", 0o700);
+        let provider = CodeProvider::new(bin.display().to_string(), CodeEngine::Claude,
+            Autonomy::AskFirst, temp.path().display().to_string(), None, None, Arc::default());
+        let (_cancel, cancel_rx) = std::sync::mpsc::channel();
+        let rx = provider.run(req(None, &[ChatMessage::user("hello")]), cancel_rx);
+        let until = std::time::Instant::now() + Duration::from_secs(3);
+        let mut done = false;
+        while std::time::Instant::now() < until {
+            if let Ok(event) = rx.try_recv() { if event == ProviderEvent::Done { done = true; break; } }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(done, "inherited pipe must not keep the turn open");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cancelled_native_turn_finishes_with_detached_stdout_holder() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("fake-claude");
+        let ready = temp.path().join("ready");
+        let script = format!("#!/bin/sh\nsetsid sleep 2 2>/dev/null &\necho ready > {}\nexec sleep 30\n", ready.display());
+        crate::exec_fixture::write_exec_fixture(&bin, &script, 0o700);
+        let provider = CodeProvider::new(bin.display().to_string(), CodeEngine::Claude,
+            Autonomy::AskFirst, temp.path().display().to_string(), None, None, Arc::default());
+        let (cancel, cancel_rx) = std::sync::mpsc::channel();
+        let rx = provider.run(req(None, &[ChatMessage::user("hello")]), cancel_rx);
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !ready.exists() && std::time::Instant::now() < deadline { std::thread::sleep(Duration::from_millis(10)); }
+        assert!(ready.exists());
+        let start = std::time::Instant::now();
+        cancel.send(()).unwrap();
+        let until = start + Duration::from_millis(1500);
+        let mut done = false;
+        while std::time::Instant::now() < until {
+            if let Ok(event) = rx.try_recv() { if event == ProviderEvent::Done { done = true; break; } }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(done, "detached stdout holder must not block Stop");
+    }
+
+    #[test]
     fn stderr_overflow_drains_pipe_and_retains_latest_error() {
         let mut bytes = b"obsolete early diagnostic\n".to_vec();
         bytes.extend(std::iter::repeat_n(b'x', 1024 * 1024));
@@ -1886,6 +2080,8 @@ mod tests {
             let temp = tempfile::tempdir().unwrap();
             let script = temp.path().join("message-fixture");
             let body = r#"#!/bin/sh
+if [ "$1" = app-server ]; then exit 2; fi
+printf '%s\n' "$@" > argv
 cat <<'EVENTS'
 {"type":"item.started","item":{"id":"first","type":"agent_message","text":"I will"}}
 {"type":"item.updated","item":{"id":"first","type":"agent_message","text":"I will not modify"}}
@@ -1901,7 +2097,7 @@ EVENTS
             let provider = CodeProvider::new(
                 script.display().to_string(),
                 CodeEngine::Codex,
-                Autonomy::Autonomous,
+                Autonomy::AskFirst,
                 temp.path().display().to_string(),
                 None,
                 None,
@@ -1923,6 +2119,9 @@ EVENTS
                 ));
                 continue;
             }
+            let argv = std::fs::read_to_string(temp.path().join("argv")).unwrap();
+            assert!(argv.contains("--sandbox\nread-only\n"), "{argv}");
+            assert!(!argv.contains("--dangerously-bypass-approvals-and-sandbox"), "{argv}");
             events = collected;
             break;
         }
@@ -2309,7 +2508,7 @@ EVENTS
     fn argv_stdin_recorder(root: &std::path::Path, name: &str) -> std::path::PathBuf {
         let bin = root.join(name);
         let script = format!(
-            "#!/bin/sh\ncat > {stdin}\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > {argv}\n\
+            "#!/bin/sh\nif [ \"$1\" = app-server ]; then exit 2; fi\ncat > {stdin}\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > {argv}\n\
              printf '%s\\n' '{{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\"}}'\n",
             stdin = root.join(format!("{name}.stdin")).display(),
             argv = root.join(format!("{name}.argv")).display(),
@@ -2325,7 +2524,7 @@ EVENTS
         let provider = CodeProvider::new(
             bin.display().to_string(),
             engine,
-            Autonomy::Autonomous,
+            if engine == CodeEngine::Codex { Autonomy::AskFirst } else { Autonomy::Autonomous },
             root.display().to_string(),
             resume.map(str::to_string),
             None,
@@ -2379,6 +2578,8 @@ EVENTS
             assert!(!argv.contains(secret), "{secret} in argv: {argv}");
         }
         assert_eq!(argv.lines().last(), Some("-"), "{argv}");
+        assert!(argv.contains("--sandbox\nread-only\n"), "{argv}");
+        assert!(!argv.contains("--dangerously-bypass-approvals-and-sandbox"), "{argv}");
         assert!(stdin.contains("THE-QUESTION"), "{stdin}");
     }
 
@@ -2615,6 +2816,8 @@ EVENTS
         for resume in [None, Some("thr-1")] {
             let (argv, stdin) = run_recorded(CodeEngine::Codex, "codex", resume);
             let lines: Vec<&str> = argv.lines().collect();
+            assert!(argv.contains("--sandbox\nread-only\n"), "{argv}");
+            assert!(!argv.contains("--dangerously-bypass-approvals-and-sandbox"), "{argv}");
             let with_system: Vec<&&str> = lines
                 .iter()
                 .filter(|l| l.contains("SECRET-SYSTEM-TEXT"))
@@ -3526,7 +3729,8 @@ EVENTS
     /// has no config-file flag).
     #[test]
     fn codex_mcp_config_flag_is_c_overrides() {
-        let (events, root, _keep) = run_fake_vendor(CodeEngine::Codex);
+        let _fixture = crate::exec_fixture::lock(&SCRIPT_FIXTURE);
+        let (events, root, _keep) = run_fake_vendor_locked_with(CodeEngine::Codex, Autonomy::AskFirst);
         assert!(
             !events.iter().any(|e| matches!(e, ProviderEvent::Error(_))),
             "no spawn/engine error expected: {events:?}"
@@ -3534,6 +3738,8 @@ EVENTS
         let argv = std::fs::read_to_string(root.join("argv")).unwrap();
         let lines: Vec<&str> = argv.lines().collect();
         let joined = lines.join(" ");
+        assert!(joined.contains("--sandbox read-only"), "{joined}");
+        assert!(!joined.contains("--dangerously-bypass-approvals-and-sandbox"), "{joined}");
         assert!(
             joined.contains("-c mcp_servers.awili-connectors.command="),
             "codex must get a -c mcp_servers.awili-connectors.command override: {joined}"

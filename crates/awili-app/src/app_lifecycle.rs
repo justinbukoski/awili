@@ -314,7 +314,13 @@ impl AwiliApp {
                 });
                 rx
             });
+            let (bounds_tx, bounds_rx) = async_channel::bounded(1);
+            std::thread::spawn(move || {
+                crate::winbounds::flush();
+                let _ = bounds_tx.send_blocking(());
+            });
             async move {
+                let _ = bounds_rx.recv().await;
                 if let Some(rx) = saved {
                     let _ = rx.recv().await;
                 }
@@ -672,6 +678,8 @@ mod tests {
                     retry_reveal_key: std::rc::Rc::default(),
                     retry_bounds: std::rc::Rc::new(std::cell::Cell::new(None)),
                     stream_abort_tx: None,
+                    host_approval: None,
+                    approval_session: Default::default(),
                     history: Default::default(),
                 });
             }

@@ -246,6 +246,7 @@ pub(crate) fn is_terminal(state: BuildState) -> bool {
 /// is on disk as `submitting` BEFORE `resolved.submit` is ever called, so a
 /// crash or a never-acknowledged submit still leaves a row to reconcile.
 /// Called on the UI thread, so the command is queued ahead of the submit.
+#[cfg(test)]
 pub(crate) fn enqueue_submitting(
     persist: Option<&crate::persistence::Persistence>,
     request: &BuildRequest,
@@ -263,6 +264,31 @@ pub(crate) fn enqueue_submitting(
             updated_at: crate::feed::unix_now(),
         });
     }
+}
+
+/// Queue the tracking row and return its commit acknowledgement. Callers must
+/// await a successful acknowledgement before making any runner request.
+pub(crate) fn commit_submitting(
+    persist: Option<&crate::persistence::Persistence>,
+    request: &BuildRequest,
+    target_id: &str,
+) -> Result<async_channel::Receiver<Result<(), String>>, String> {
+    let persist = persist.ok_or_else(|| "Storage is unavailable".to_string())?;
+    let (reply, ack) = async_channel::bounded(1);
+    persist.send(crate::persistence::PersistCmd::CommitBuildJob {
+        row: awili_persist::build_jobs::BuildJobRow {
+            turn_id: request.turn_id.clone(),
+            request_id: request.request_id.clone(),
+            target_id: target_id.to_string(),
+            revision: 0,
+            state: STATE_SUBMITTING.to_string(),
+            result_sha: None,
+            failure: None,
+            updated_at: crate::feed::unix_now(),
+        },
+        reply,
+    });
+    Ok(ack)
 }
 
 /// Record the outcome of one submit attempt on the SAME row (P10/F4): the

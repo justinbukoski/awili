@@ -619,6 +619,7 @@ pub fn verify_bound_identity(
 /// (SSE text or bare JSON error — `decode_stream` handles both). Tests
 /// inject scripted bodies; the binary speaks HTTP.
 pub trait Transport {
+    fn set_cancel_flag(&mut self, _flag: std::sync::Arc<std::sync::atomic::AtomicBool>) {}
     fn max_output_tokens(&self) -> u64 { REPLY_ROOM_TOKENS }
 
     fn stream(&mut self, request_body: &str) -> Result<String, SeamError>;
@@ -2623,6 +2624,7 @@ pub struct HttpTransport {
     /// Bearer credential bound to THIS endpoint only. `None`/empty = send no
     /// Authorization header. Never logged, including in error paths.
     api_key: Option<String>,
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     client: reqwest::blocking::Client,
 }
 
@@ -2679,6 +2681,7 @@ impl HttpTransport {
             max_output_tokens: REPLY_ROOM_TOKENS,
             api_key,
             preflight: None,
+            cancel: None,
             client: reqwest::blocking::Client::builder()
                 .timeout(timeout)
                 .redirect(engine_redirect_policy())
@@ -2720,6 +2723,7 @@ impl HttpTransport {
 }
 
 impl Transport for HttpTransport {
+    fn set_cancel_flag(&mut self, flag: std::sync::Arc<std::sync::atomic::AtomicBool>) { self.cancel = Some(flag); }
     fn max_output_tokens(&self) -> u64 { self.max_output_tokens }
     fn stream(&mut self, request_body: &str) -> Result<String, SeamError> {
         self.stream_lines(request_body, &mut |_| true)
@@ -2735,7 +2739,6 @@ impl Transport for HttpTransport {
         request_body: &str,
         on_line: &mut dyn FnMut(&str) -> bool,
     ) -> Result<String, SeamError> {
-        use std::io::BufRead as _;
         if let Some(preflight) = &self.preflight {
             preflight().map_err(SeamError::Transport)?;
         }
@@ -2760,29 +2763,9 @@ impl Transport for HttpTransport {
             SeamError::Transport(msg)
         })?;
         let status = resp.status();
-        let mut reader = std::io::BufReader::new(resp);
-        let mut body = String::new();
-        let mut line: Vec<u8> = Vec::new();
-        loop {
-            line.clear();
-            let n = reader
-                .read_until(b'\n', &mut line)
-                .map_err(|e| SeamError::Transport(e.to_string()))?;
-            if n == 0 {
-                break;
-            }
-            let text = std::str::from_utf8(&line).map_err(|e| {
-                SeamError::Transport(format!(
-                    "the model server sent a reply that is not text: {e}"
-                ))
-            })?;
-            body.push_str(text);
-            let bare = text.strip_suffix('\n').unwrap_or(text);
-            let bare = bare.strip_suffix('\r').unwrap_or(bare);
-            if status.is_success() && !on_line(bare) {
-                break;
-            }
-        }
+        let body = bounded_stream_body(resp, status.is_success(), on_line, || {
+            self.cancel.as_ref().is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))
+        })?;
         // Non-success WITH a body flows through decode_stream, which
         // classifies canonical JSON error bodies as ProviderError — the
         // audited path. An empty failure body is a transport error.
@@ -2793,6 +2776,40 @@ impl Transport for HttpTransport {
         }
         Ok(body)
     }
+}
+
+// Read bounded chunks so cancellation is observed even before a line ends.
+fn bounded_stream_body(mut reader: impl std::io::Read, successful: bool, on_line: &mut dyn FnMut(&str) -> bool, cancelled: impl Fn() -> bool) -> Result<String, SeamError> {
+    const LINE_LIMIT: usize = 1024 * 1024;
+    const BODY_LIMIT: usize = 16 * 1024 * 1024;
+    let mut body = String::new();
+    let mut line = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        if cancelled() { return Err(SeamError::Cancelled(StopCause::Cancelled)); }
+        let n = reader.read(&mut chunk).map_err(|e| SeamError::Transport(e.to_string()))?;
+        if cancelled() { return Err(SeamError::Cancelled(StopCause::Cancelled)); }
+        if n == 0 { break; }
+        for part in chunk[..n].split_inclusive(|b| *b == b'\n') {
+            if line.len().saturating_add(part.len()) > LINE_LIMIT || body.len().saturating_add(line.len()).saturating_add(part.len()) > BODY_LIMIT {
+                return Err(SeamError::Transport("model response exceeds size limit".into()));
+            }
+            line.extend_from_slice(part);
+            if part.last() == Some(&b'\n') {
+                let text = std::str::from_utf8(&line).map_err(|_| SeamError::Transport("model response is not text".into()))?;
+                body.push_str(text);
+                let bare = text.trim_end_matches('\n').trim_end_matches('\r');
+                if successful && !on_line(bare) { return Ok(body); }
+                line.clear();
+            }
+        }
+    }
+    if !line.is_empty() {
+        let text = std::str::from_utf8(&line).map_err(|_| SeamError::Transport("model response is not text".into()))?;
+        body.push_str(text);
+        if successful { on_line(text.trim_end_matches('\r')); }
+    }
+    Ok(body)
 }
 
 // -- the host loop ----------------------------------------------------------
@@ -4120,7 +4137,7 @@ fn execute_one<S1: AppendOnlyLog>(
     // opens); every other call keeps the session's folder.
     let call_root = (host_io.any_folder()
         && def.identity.origin.origin == awili_engine_authz::policy::BUILTIN_FS_ORIGIN)
-        .then(|| any_folder::call_root(&call.name, &call.arguments, session_root))
+        .then(|| any_folder::call_root(&def.identity.name, &call.arguments, session_root))
         .flatten();
     let folder_root: &str = call_root.as_deref().unwrap_or(session_root);
 
@@ -4132,7 +4149,9 @@ fn execute_one<S1: AppendOnlyLog>(
     let secret_files = if def.identity.origin.origin
         == awili_engine_authz::policy::BUILTIN_FS_ORIGIN
     {
-        awili_builtins::secret_files_reached(folder_root, call, awili_engine_authz::is_secret_path)
+        let mut canonical_call = call.clone();
+        canonical_call.name = def.identity.name.clone();
+        awili_builtins::secret_files_reached(folder_root, &canonical_call, awili_engine_authz::is_secret_path)
     } else {
         Vec::new()
     };

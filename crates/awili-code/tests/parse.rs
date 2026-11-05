@@ -365,8 +365,6 @@ fn build_args_first_turn_per_engine() {
             "--include-partial-messages",
             "--permission-mode",
             "plan",
-            "--permission-prompts",
-            "none",
             "fix the bug"
         ]
     );
@@ -398,7 +396,7 @@ fn permission_args_never_sandbox_and_keep_network() {
     // read-only (the one D5 exception to the never-sandbox rule).
     assert_eq!(
         CodeEngine::Claude.permission_args(Autonomy::AskFirst),
-        vec!["--permission-mode", "plan", "--permission-prompts", "none"]
+        vec!["--permission-mode", "plan"]
     );
     assert_eq!(
         CodeEngine::Codex.permission_args(Autonomy::Autonomous),

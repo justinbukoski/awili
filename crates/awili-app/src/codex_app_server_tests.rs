@@ -125,6 +125,27 @@ fn read_lines(path: &Path) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Repeated polling during an approval wait or warm-cache expiry must not
+/// reap the Unix server before group cleanup can use its reserved identity.
+#[cfg(unix)]
+#[test]
+fn server_exit_poll_preserves_unreaped_leader_identity() {
+    let mut child = Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !server_has_exited(&mut child) {
+        assert!(Instant::now() < deadline, "fixture server did not exit");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(server_has_exited(&mut child));
+    let observation = crate::proc_compat::child_exit_observed(child.id());
+    // Always reap the fixture before asserting, including the failure path.
+    assert!(child.wait().unwrap().success());
+    assert!(
+        matches!(observation, Ok(true)),
+        "poll reaped leader: {observation:?}"
+    );
+}
+
 /// A completed CLI can exit while a background MCP-like child retains stderr.
 /// Completion must end that owned child and deliver Done without waiting for
 /// its sleep to finish, even while the caller keeps its Stop sender alive.
@@ -400,7 +421,7 @@ fn rc2_cxs_codex_without_app_server_runs_on_exec() {
     assert!(!exec_fallback_for(&bin.display().to_string()));
     for _ in 0..2 {
         let on_exec = Arc::new(AtomicBool::new(false));
-        let p = provider(&bin, dir.path(), Autonomy::Autonomous, None, Arc::default())
+        let p = provider(&bin, dir.path(), Autonomy::AskFirst, None, Arc::default())
             .observe_exec(Arc::clone(&on_exec));
         let (_cancel, cancel_rx) = std::sync::mpsc::channel();
         let events = drain(p.run(req("hello"), cancel_rx));
@@ -841,4 +862,327 @@ fn resumed_image_turn_emits_only_current_usage_and_real_image_input() {
         .as_str()
         .unwrap()
         .contains("base64"));
+}
+
+#[cfg(unix)]
+#[test]
+fn native_host_approvals_deliver_exact_replies_and_reuse_only_session_grants() {
+    use awili_providers::ApprovalChoice;
+    let dir = tempfile::tempdir().unwrap();
+    let approval = |id| {
+        say(&serde_json::json!({"id":id,"method":"mcpServer/elicitation/request","params":{"threadId":"thr-1","turnId":"turn-1","serverName":"desktop","mode":"form","message":"Capture the whole screen?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call","tool_name":"screenshot","tool_params":{"allScreens":true}}}}).to_string())
+    };
+    let after = format!("{}read -r l; printf '%s\\n' \"$l\" >> {}\n{}read -r l; printf '%s\\n' \"$l\" >> {}\n{}exit 0\n", approval(77), dir.path().join("stdin").display(), approval(78), dir.path().join("stdin").display(), say(r#"{"method":"turn/completed","params":{"threadId":"thr-1","turn":{"id":"turn-1","status":"completed"}}}"#));
+    let bin = fake_server(dir.path(), None, &after);
+    let p = provider(
+        &bin,
+        dir.path(),
+        Autonomy::Autonomous,
+        None,
+        Arc::new(Mutex::new(None)),
+    )
+    .with_approval_session(Default::default());
+    let (_cancel, cancel_rx) = std::sync::mpsc::channel();
+    let rx = p.run(req("capture"), cancel_rx);
+    let mut approvals = 0;
+    while let Ok(event) = rx.recv_blocking() {
+        match event {
+            ProviderEvent::HostApproval(prompt) => {
+                approvals += 1;
+                assert!(prompt.detail.contains("allScreens"));
+                assert!(prompt.answer(ApprovalChoice::Session));
+            }
+            ProviderEvent::Error(error) => panic!("{error}"),
+            ProviderEvent::Done => break,
+            _ => {}
+        }
+    }
+    assert_eq!(approvals, 1);
+    let sent = read_lines(&dir.path().join("stdin"));
+    assert_eq!(sent[2]["params"]["approvalsReviewer"], "user");
+    assert_eq!(sent[3]["params"]["approvalsReviewer"], "user");
+    for id in [77, 78] {
+        let reply = sent.iter().find(|v| v["id"] == id).unwrap();
+        assert_eq!(reply["result"]["action"], "accept");
+        assert!(
+            reply["result"].get("_meta").is_none(),
+            "no broader provider policy"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_pending_approval_expires_when_server_resolves_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let after = [
+        say(r#"{"id":77,"method":"item/commandExecution/requestApproval","params":{"threadId":"thr-1","turnId":"turn-1","command":"check","cwd":"/project"}}"#),
+        "sleep 0.1\n".into(),
+        say(r#"{"method":"serverRequest/resolved","params":{"threadId":"thr-1","requestId":77}}"#),
+        "read -r l\n".into(),
+        say(r#"{"method":"turn/completed","params":{"threadId":"thr-1","turn":{"id":"turn-1","status":"completed"}}}"#),
+        "exit 0\n".into(),
+    ].concat();
+    let bin = fake_server(dir.path(), None, &after);
+    let p = provider(
+        &bin,
+        dir.path(),
+        Autonomy::Autonomous,
+        None,
+        Arc::new(Mutex::new(None)),
+    )
+    .with_approval_session(Default::default());
+    let (_cancel, cancel_rx) = std::sync::mpsc::channel();
+    let events = drain(p.run(req("check"), cancel_rx));
+    let prompt = events
+        .iter()
+        .find_map(|e| {
+            if let ProviderEvent::HostApproval(p) = e {
+                Some(p)
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    assert!(!prompt.active());
+    assert!(!prompt.answer(awili_providers::ApprovalChoice::Session));
+    assert_eq!(events.last(), Some(&ProviderEvent::Done));
+}
+
+#[cfg(unix)]
+#[test]
+fn autonomous_never_falls_back_to_bypass_exec() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("old-codex");
+    let starts = dir.path().join("starts");
+    crate::exec_fixture::write_exec_fixture(
+        &bin,
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$1\" >> {}\nexit 2\n",
+            starts.display()
+        ),
+        0o755,
+    );
+    let p = provider(&bin, dir.path(), Autonomy::Autonomous, None, Arc::default());
+    let (_cancel, rx) = std::sync::mpsc::channel();
+    let events = drain(p.run(req("hello"), rx));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, ProviderEvent::Error(s) if s.contains("app-server is required"))));
+    assert_eq!(
+        std::fs::read_to_string(starts)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        ["app-server"]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn oversized_app_server_frame_ends_with_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = fake_server(
+        dir.path(),
+        None,
+        "head -c 1100000 /dev/zero | tr '\\0' x; sleep 2",
+    );
+    let p = provider(&bin, dir.path(), Autonomy::AskFirst, None, Arc::default());
+    let (_cancel, cancel_rx) = std::sync::mpsc::channel();
+    let events = drain(p.run(req("hello"), cancel_rx));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ProviderEvent::Error(s) if s.contains("size limit"))),
+        "{events:?}"
+    );
+    assert_eq!(events.last(), Some(&ProviderEvent::Done));
+}
+
+#[cfg(unix)]
+#[test]
+fn plan_then_auto_resumes_thread_with_auto_posture() {
+    let dir = tempfile::tempdir().unwrap();
+    let after = say(
+        r#"{"method":"turn/completed","params":{"threadId":"thr-1","turn":{"id":"turn-1","items":[],"status":"completed"}}}"#,
+    );
+    let bin = fake_server(dir.path(), None, &after);
+    let slot = Arc::new(Mutex::new(None));
+    let (_cancel, cancel_rx) = std::sync::mpsc::channel();
+    let plan = provider(&bin, dir.path(), Autonomy::AskFirst, None, slot.clone());
+    assert_eq!(
+        drain(plan.run(req("plan"), cancel_rx)).last(),
+        Some(&ProviderEvent::Done)
+    );
+    let resume = slot.lock().unwrap().clone().expect("thread id from plan");
+    let (_cancel, cancel_rx) = std::sync::mpsc::channel();
+    let auto = provider(&bin, dir.path(), Autonomy::Autonomous, Some(&resume), slot);
+    assert_eq!(
+        drain(auto.run(req("apply"), cancel_rx)).last(),
+        Some(&ProviderEvent::Done)
+    );
+    let sent = read_lines(&dir.path().join("stdin"));
+    let threads: Vec<_> = sent
+        .iter()
+        .filter(|v| matches!(v["method"].as_str(), Some("thread/start" | "thread/resume")))
+        .collect();
+    assert_eq!(threads.len(), 2, "{sent:?}");
+    assert_eq!(threads[0]["method"], "thread/start");
+    assert_eq!(threads[0]["params"]["sandbox"], "read-only");
+    assert_eq!(threads[0]["params"]["approvalPolicy"], "never");
+    assert_eq!(threads[1]["method"], "thread/resume");
+    assert_eq!(threads[1]["params"]["threadId"], resume);
+    assert_eq!(threads[1]["params"]["sandbox"], "danger-full-access");
+    assert_eq!(threads[1]["params"]["approvalPolicy"], "on-request");
+    assert_eq!(threads[1]["params"]["approvalsReviewer"], "auto_review");
+}
+
+#[cfg(unix)]
+#[test]
+fn slow_consumer_receives_normal_app_server_burst() {
+    let dir = tempfile::tempdir().unwrap();
+    let delta = r#"{"method":"item/agentMessage/delta","params":{"threadId":"thr-1","turnId":"turn-1","itemId":"msg-1","delta":"x"}}"#;
+    let after = format!(
+        "i=0; while [ $i -lt 1000 ]; do printf '%s\\n' '{delta}'; i=$((i+1)); done\n{}",
+        say(
+            r#"{"method":"turn/completed","params":{"threadId":"thr-1","turn":{"id":"turn-1","items":[],"status":"completed"}}}"#
+        )
+    );
+    let bin = fake_server(dir.path(), None, &after);
+    let p = provider(&bin, dir.path(), Autonomy::AskFirst, None, Arc::default());
+    let (_cancel, cancel_rx) = std::sync::mpsc::channel();
+    let rx = p.run(req("burst"), cancel_rx);
+    let mut text = String::new();
+    loop {
+        match rx.recv_blocking().unwrap() {
+            ProviderEvent::Token(t) => {
+                text.push_str(&t);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            ProviderEvent::Error(e) => panic!("unexpected: {e}"),
+            ProviderEvent::Done => break,
+            _ => {}
+        }
+    }
+    assert_eq!(text, "x".repeat(1000));
+}
+
+#[cfg(unix)]
+#[test]
+fn stop_ends_server_even_when_event_consumer_is_held() {
+    let dir = tempfile::tempdir().unwrap();
+    let frame = r#"{"method":"item/agentMessage/delta","params":{"threadId":"thr-1","turnId":"turn-1","itemId":"msg-1","delta":"x"}}"#;
+    let after = format!("while :; do printf '%s\\n' '{frame}'; done");
+    let bin = fake_server(dir.path(), None, &after);
+    let p = provider(&bin, dir.path(), Autonomy::AskFirst, None, Arc::default());
+    let (cancel, cancel_rx) = std::sync::mpsc::channel();
+    let rx = p.run(req("burst"), cancel_rx);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while rx.len() < 128 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(rx.len(), 128, "fixture did not fill event queue");
+    cancel.send(()).unwrap();
+    let pid = std::fs::read_to_string(dir.path().join("pid")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let out = Command::new("ps")
+            .args(["-o", "stat=", "-p", pid.trim()])
+            .output()
+            .unwrap();
+        let state = String::from_utf8_lossy(&out.stdout);
+        if state.trim().is_empty() || state.trim().starts_with('Z') {
+            break;
+        }
+        assert!(Instant::now() < deadline, "Stop did not end held server");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let events = drain(rx);
+    assert_eq!(events.last(), Some(&ProviderEvent::Done));
+}
+
+#[cfg(unix)]
+#[test]
+fn pending_approval_backlog_expires_and_reports_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let approval = say(
+        r#"{"id":77,"method":"item/commandExecution/requestApproval","params":{"threadId":"thr-1","turnId":"turn-1","command":"check","cwd":"/project"}}"#,
+    );
+    let noise = say(r#"{"method":"unrelated/notification","params":{}}"#);
+    let resolved =
+        say(r#"{"method":"serverRequest/resolved","params":{"threadId":"thr-1","requestId":77}}"#);
+    let after = format!("{approval}{}{resolved}sleep 5\n", noise.repeat(8));
+    let bin = fake_server(dir.path(), None, &after);
+    let p = provider(&bin, dir.path(), Autonomy::Autonomous, None, Arc::default())
+        .with_approval_session(Default::default());
+    let (_cancel, cancel_rx) = std::sync::mpsc::channel();
+    let events = drain(p.run(req("check"), cancel_rx));
+    if let Some(prompt) = events.iter().find_map(|e| {
+        if let ProviderEvent::HostApproval(p) = e {
+            Some(p)
+        } else {
+            None
+        }
+    }) {
+        assert!(!prompt.active());
+    }
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ProviderEvent::Error(s) if s.contains("approval was pending"))),
+        "{events:?}"
+    );
+    assert_eq!(events.last(), Some(&ProviderEvent::Done));
+}
+
+#[cfg(unix)]
+#[test]
+fn nonblocking_server_write_observes_stop() {
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", "exec sleep 30"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pipe = child.stdin.take().unwrap();
+    set_nonblocking(&pipe).unwrap();
+    let mut stdin = Some(pipe);
+    let (cancel, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        cancel.send(()).unwrap();
+    });
+    let mut stopped = false;
+    let start = Instant::now();
+    assert!(!send_lines_cancellable(
+        &mut stdin,
+        &["x".repeat(1024 * 1024)],
+        Some(&rx),
+        &mut stopped
+    ));
+    assert!(stopped && start.elapsed() < Duration::from_secs(1));
+    child.kill().unwrap();
+    child.wait().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn handshake_deadline_holds_under_finite_notification_flood() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("codex-noisy");
+    crate::exec_fixture::write_exec_fixture(&bin, "#!/bin/sh\nread -r line\ni=0; while [ $i -lt 10000000 ]; do printf '%s\\n' '{\"method\":\"unrelated/notification\",\"params\":{}}'; i=$((i+1)); done\n", 0o700);
+    let p = provider(&bin, dir.path(), Autonomy::Autonomous, None, Arc::default());
+    let (_cancel, cancel_rx) = std::sync::mpsc::channel();
+    let started = Instant::now();
+    let events = drain(p.run(req("check"), cancel_rx));
+    assert!(
+        started.elapsed() < HANDSHAKE_TIMEOUT + Duration::from_secs(4),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ProviderEvent::Error(s) if s.contains("app-server is required"))),
+        "{events:?}"
+    );
 }

@@ -413,6 +413,12 @@ fn download(
             if n == 0 {
                 break;
             }
+            if (n as u64) > known.size.saturating_sub(received) {
+                return Err(ModelError::Verify(format!(
+                    "download exceeds pinned size of {} bytes",
+                    known.size
+                )));
+            }
             file.write_all(&buf[..n])?;
             hasher.update(&buf[..n]);
             received += n as u64;
@@ -744,6 +750,28 @@ mod tests {
             let _ = tx.send(result);
         });
         rx.recv_timeout(wait)
+    }
+
+    #[test]
+    fn chunked_download_cannot_exceed_pinned_size() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/model", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = [0u8; 4096];
+            let _ = std::io::Read::read(&mut stream, &mut buffer);
+            let body = vec![b'x'; 1001];
+            write!(stream, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{:x}\r\n", body.len()).unwrap();
+            stream.write_all(&body).unwrap();
+            stream.write_all(b"\r\n0\r\n\r\n").unwrap();
+        });
+        let dir = temp_dir("oversize");
+        let dest = dir.join("model.bin");
+        let result = download(&url, &dest, &SLOW_MODEL, DownloadLimits { stall: Duration::from_secs(2), overall: Duration::from_secs(5) }, &mut |_| {});
+        assert!(result.unwrap_err().to_string().contains("exceeds pinned size"));
+        assert!(!dest.exists());
+        assert!(!dest.with_extension("partial").exists());
+        fs::remove_dir_all(dir).ok();
     }
 
     #[test]

@@ -299,12 +299,127 @@ pub(crate) fn bound_content(mut s: String) -> String {
     s
 }
 
+// The wrapper serializes every signal and reap against forced teardown. The
+// child remains unreaped while its numeric process-group identity is in use.
+#[cfg(unix)]
+#[derive(Clone, Debug, Default)]
+struct OwnedMcpGroup(std::sync::Arc<std::sync::Mutex<Option<u32>>>);
+
+#[cfg(unix)]
+impl OwnedMcpGroup {
+    fn kill(&self) {
+        let guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(pid) = *guard {
+            crate::code_provider::kill_process_group(pid as i32);
+        }
+    }
+}
+
+#[cfg(unix)]
+impl process_wrap::tokio::CommandWrapper for OwnedMcpGroup {
+    fn pre_spawn(
+        &mut self,
+        command: &mut tokio::process::Command,
+        _: &process_wrap::tokio::CommandWrap,
+    ) -> std::io::Result<()> {
+        command.process_group(0);
+        Ok(())
+    }
+    fn wrap_child(
+        &mut self,
+        inner: Box<dyn process_wrap::tokio::ChildWrapper>,
+        _: &process_wrap::tokio::CommandWrap,
+    ) -> std::io::Result<Box<dyn process_wrap::tokio::ChildWrapper>> {
+        let pid = inner
+            .id()
+            .ok_or_else(|| std::io::Error::other("MCP child has no pid"))?;
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(pid);
+        Ok(Box::new(OwnedMcpChild {
+            inner: Some(inner),
+            group: self.clone(),
+        }))
+    }
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+struct OwnedMcpChild {
+    inner: Option<Box<dyn process_wrap::tokio::ChildWrapper>>,
+    group: OwnedMcpGroup,
+}
+
+#[cfg(unix)]
+impl process_wrap::tokio::ChildWrapper for OwnedMcpChild {
+    fn inner(&self) -> &dyn process_wrap::tokio::ChildWrapper {
+        self.inner.as_deref().unwrap().inner()
+    }
+    fn inner_mut(&mut self) -> &mut dyn process_wrap::tokio::ChildWrapper {
+        self.inner.as_deref_mut().unwrap().inner_mut()
+    }
+    fn into_inner(mut self: Box<Self>) -> Box<dyn process_wrap::tokio::ChildWrapper> {
+        self.group.kill();
+        *self.group.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.inner.take().unwrap()
+    }
+    fn start_kill(&mut self) -> std::io::Result<()> {
+        self.group.kill();
+        Ok(())
+    }
+    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        let mut guard = self.group.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(pid) = *guard {
+            match crate::proc_compat::child_exit_observed(pid) {
+                Ok(false) => return Ok(None),
+                Ok(true) => {}
+                Err(error) => {
+                    // Identity is no longer proven; never signal this id again.
+                    *guard = None;
+                    return Err(error);
+                }
+            }
+            crate::code_provider::kill_process_group(pid as i32);
+            *guard = None;
+        }
+        self.inner.as_deref_mut().unwrap().try_wait()
+    }
+    fn wait(
+        &mut self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = std::io::Result<std::process::ExitStatus>> + Send + '_,
+        >,
+    > {
+        Box::pin(async move {
+            loop {
+                if let Some(status) = self.try_wait()? {
+                    return Ok(status);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for OwnedMcpChild {
+    fn drop(&mut self) {
+        if self.inner.is_some() {
+            let mut guard = self.group.0.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(pid) = guard.take() {
+                crate::code_provider::kill_process_group(pid as i32);
+            }
+        }
+    }
+}
+
 /// One connected MCP session: the rmcp client plus the child pid for
 /// reap verification. Lives on the runtime thread, inside an `Rc` shared
 /// between concurrent calls (rmcp's client multiplexes requests).
 pub(crate) struct Session {
     client: rmcp::service::RunningService<rmcp::RoleClient, ()>,
     child_pid: Option<u32>,
+    #[cfg(unix)]
+    owned_group: OwnedMcpGroup,
 }
 
 /// A successful connect (unit 4b, design r9 §2.4): session + advertisement
@@ -355,10 +470,12 @@ impl Session {
         // Windows: never a bare name (searched for in more places than anyone
         // intends): resolved to an absolute program or a plain "not found".
         let program =
-            crate::agent_bin::resolve_program(spec.program.as_ref()).map_err(|detail| ConnectFailure {
-                cause: DeathCause::LaunchFailed,
-                selected_class: None,
-                detail: format!("failed to launch MCP server process: {detail}"),
+            crate::agent_bin::resolve_program(spec.program.as_ref()).map_err(|detail| {
+                ConnectFailure {
+                    cause: DeathCause::LaunchFailed,
+                    selected_class: None,
+                    detail: format!("failed to launch MCP server process: {detail}"),
+                }
             })?;
         let command = Command::new(&program).configure(|cmd| apply_child_launch(cmd, spec));
         #[allow(unused_mut)]
@@ -367,8 +484,11 @@ impl Session {
         // resumed, so a forced stop ends the server's whole tree (no-op elsewhere).
         #[cfg(windows)]
         command.wrap(crate::winjob::TrackedJob);
-        let child = TokioChildProcess::new(command)
-        .map_err(|err| ConnectFailure {
+        #[cfg(unix)]
+        let owned_group = OwnedMcpGroup::default();
+        #[cfg(unix)]
+        command.wrap(owned_group.clone());
+        let child = TokioChildProcess::new(command).map_err(|err| ConnectFailure {
             cause: DeathCause::LaunchFailed,
             selected_class: None,
             detail: format!("failed to launch MCP server process: {err}"),
@@ -413,7 +533,12 @@ impl Session {
             })?;
 
         Ok(ConnectSuccess {
-            session: Session { client, child_pid },
+            session: Session {
+                client,
+                child_pid,
+                #[cfg(unix)]
+                owned_group,
+            },
             claimed_server,
             tools,
             dropped_at_capture,
@@ -612,6 +737,9 @@ impl Session {
     /// pid already gone. Child-always-reaped stays unconditional.
     pub(crate) async fn force_kill(&self) {
         if let Some(pid) = self.child_pid {
+            #[cfg(unix)]
+            self.owned_group.kill();
+            #[cfg(not(unix))]
             crate::proc_compat::kill_pid_reporting(pid);
             reap_after_failure(Some(pid)).await;
         }
@@ -747,6 +875,68 @@ pub(crate) async fn reap_after_failure(pid: Option<u32>) {
 
 #[cfg(test)]
 mod tests {
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn owned_mcp_group_force_and_reap_end_helper_without_stale_signal() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("helper-ran");
+        let ready = dir.path().join("ready");
+        let script = format!(
+            "(sleep 1; touch {}) & echo ready > {}; wait",
+            marker.display(),
+            ready.display()
+        );
+        let group = super::OwnedMcpGroup::default();
+        let mut command = process_wrap::tokio::CommandWrap::with_new("/bin/sh", |cmd| {
+            cmd.args(["-c", &script]);
+        });
+        command.wrap(group.clone());
+        let mut child = command.spawn().unwrap();
+        for _ in 0..100 {
+            if ready.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(ready.exists());
+        group.kill();
+        tokio::time::timeout(Duration::from_secs(3), child.wait())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            group.0.lock().unwrap().is_none(),
+            "identity cleared before reap"
+        );
+        group.kill(); // no stale numeric identity remains
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert!(!marker.exists(), "helper must not survive forced teardown");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn concurrent_mcp_force_and_reap_clear_the_owned_identity() {
+        for _ in 0..16 {
+            let group = super::OwnedMcpGroup::default();
+            let mut command = process_wrap::tokio::CommandWrap::with_new("/bin/sh", |cmd| {
+                cmd.args(["-c", "sleep 0.02"]);
+            });
+            command.wrap(group.clone());
+            let mut child = command.spawn().unwrap();
+            let force = group.clone();
+            let task = tokio::task::spawn_blocking(move || {
+                force.kill();
+            });
+            tokio::time::timeout(Duration::from_secs(3), child.wait())
+                .await
+                .unwrap()
+                .unwrap();
+            task.await.unwrap();
+            assert!(group.0.lock().unwrap().is_none());
+            group.kill();
+        }
+    }
 
     /// RC2-APP (F0175): an exited child that nobody has reaped yet ends the
     /// wait at once (the old existence probe saw it as alive for the whole

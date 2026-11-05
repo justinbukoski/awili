@@ -190,7 +190,7 @@ fn links(blocks: &[crate::markdown_plan::PlanBlock], into: &mut Vec<String>) {
         match block {
             PlanBlock::Text { text, .. } => {
                 for url in text.urls.iter() {
-                    if !into.contains(url) {
+                    if crate::markdown_plan::link_allowed(url) && !into.contains(url) {
                         into.push(url.clone());
                     }
                 }
@@ -454,7 +454,11 @@ impl AwiliApp {
             .child(
                 ui::Row::new("reply-inspector-run-id")
                     .title("Run id")
-                    .subtitle(run_id.clone().unwrap_or_else(|| "Not recorded for this reply".into()))
+                    .subtitle(
+                        run_id
+                            .clone()
+                            .unwrap_or_else(|| "Not recorded for this reply".into()),
+                    )
                     .wrap(),
             )
             .child(
@@ -509,7 +513,11 @@ impl AwiliApp {
                     .title("Link in this reply")
                     .subtitle(url)
                     .wrap()
-                    .on_click(move |_, _, cx| cx.open_url(&open_url)),
+                    .on_click(move |_, _, cx| {
+                        if crate::markdown_plan::link_allowed(&open_url) {
+                            cx.open_url(&open_url);
+                        }
+                    }),
             );
         }
         let mut details: Vec<AnyElement> = Vec::new();
@@ -640,5 +648,21 @@ impl AwiliApp {
                 )
                 .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod link_policy_tests {
+    use super::links;
+
+    #[test]
+    fn inspector_omits_untrusted_schemes() {
+        let blocks = crate::markdown::parse_or_plain(
+            "[web](https://example.org) [mail](mailto:a@example.org) [file](file:///tmp/x) [custom](evil:run)",
+        );
+        let plan = crate::markdown_plan::plan_blocks(&blocks, &crate::markdown_plan::ASSISTANT);
+        let mut found = Vec::new();
+        links(&plan, &mut found);
+        assert_eq!(found, ["https://example.org", "mailto:a@example.org"]);
     }
 }

@@ -81,3 +81,11 @@ fn call_timeout_wins_over_a_larger_executor_timeout() {
     assert_eq!(err.to_string(), "timeout");
     assert!(started.elapsed() < Duration::from_secs(4));
 }
+
+#[cfg(unix)]
+#[test]
+fn noisy_command_hits_combined_output_limit() {
+    let executor = CommandExecutor::new("head -c 1100000 /dev/zero", Duration::from_secs(5));
+    let err = executor.ask("unused", Duration::from_secs(5)).unwrap_err();
+    assert!(err.to_string().contains("output exceeds size limit"));
+}

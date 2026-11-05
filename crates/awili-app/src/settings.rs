@@ -1044,7 +1044,8 @@ impl SettingsState {
         }
         // Keys whose reference this save drops (provider deleted, key cleared):
         // removed from the secret store once the write has landed.
-        let orphans = crate::secret_store::orphaned_provider_accounts(&before.providers, &providers);
+        let orphans =
+            crate::secret_store::orphaned_provider_accounts(&before.providers, &providers);
         if let Err(e) = doc.set_providers(&providers) {
             self.error = Some(e.to_string());
             return false;
@@ -1832,10 +1833,11 @@ models = [\"claude-x\"]
     /// M4: a typed key is on disk only as `secret:provider:<name>`, and the
     /// (test-build, in-memory) secret store holds the real value verbatim.
     fn assert_key_filed(on_disk_key: Option<&str>, name: &str, key: &str) {
-        assert_eq!(on_disk_key, Some(format!("secret:provider:{name}").as_str()));
+        let account = awili_config::secrets::parse_secret_ref(on_disk_key.unwrap()).unwrap();
+        assert!(account.starts_with(&format!("provider:{name}:")));
         assert_eq!(
             crate::secret_store::store()
-                .get(&format!("provider:{name}"))
+                .get(account)
                 .unwrap()
                 .as_deref(),
             Some(key)
@@ -2026,8 +2028,37 @@ models = [\"claude-x\"]
         );
         assert_eq!(
             s.field_text(Field::ProviderApiKey(0)),
-            "secret:provider:anth",
-            "the editor shows the reference on reopen, not the key"
+            s.draft.as_ref().unwrap().providers[0]
+                .api_key
+                .as_deref()
+                .unwrap(),
+            "the editor shows the same saved reference on reopen, not the key"
+        );
+    }
+
+    #[test]
+    fn replacing_provider_key_preserves_active_secret_when_config_write_fails() {
+        let mut s = state_with_file(KEY_NONE);
+        s.open();
+        s.begin_field(Field::ProviderApiKey(0));
+        assert!(s.commit_draft_field("old-key"));
+        assert!(s.save_draft());
+        let reference = s.doc.as_ref().unwrap().config().providers[0]
+            .api_key
+            .clone()
+            .unwrap();
+        let old_account = awili_config::secrets::parse_secret_ref(&reference).unwrap();
+        s.begin_field(Field::ProviderApiKey(0));
+        assert!(s.commit_draft_field("replacement-key"));
+        std::fs::remove_file(s.path()).unwrap();
+        std::fs::create_dir(s.path()).unwrap();
+        assert!(!s.save_draft());
+        assert_eq!(
+            crate::secret_store::store()
+                .get(old_account)
+                .unwrap()
+                .as_deref(),
+            Some("old-key")
         );
     }
 
@@ -2528,7 +2559,15 @@ models = ["llama3.1:8b", "qwen2.5:14b"]
         assert!(on_disk.contains("secret:provider:ollama"), "{on_disk}");
         assert_eq!(
             crate::secret_store::store()
-                .get("provider:ollama")
+                .get(
+                    awili_config::secrets::parse_secret_ref(
+                        s.doc.as_ref().unwrap().config().providers[0]
+                            .api_key
+                            .as_deref()
+                            .unwrap()
+                    )
+                    .unwrap()
+                )
                 .unwrap()
                 .as_deref(),
             Some("sk-typed-do-not-leak-7731")
@@ -2544,20 +2583,34 @@ models = ["llama3.1:8b", "qwen2.5:14b"]
         s.begin_field(Field::ProviderApiKey(0));
         assert!(s.commit_draft_field("sk-stale-check"));
         assert!(s.save_draft(), "{:?}", s.error);
-        assert!(store().get("provider:ollama").unwrap().is_some());
+        let first = s.doc.as_ref().unwrap().config().providers[0]
+            .api_key
+            .clone()
+            .unwrap();
+        let first = awili_config::secrets::parse_secret_ref(&first)
+            .unwrap()
+            .to_string();
+        assert!(store().get(&first).unwrap().is_some());
         // Clear the key.
         s.begin_field(Field::ProviderApiKey(0));
         assert!(s.commit_draft_field(""));
         assert!(s.save_draft(), "{:?}", s.error);
-        assert_eq!(store().get("provider:ollama").unwrap(), None);
+        assert_eq!(store().get(&first).unwrap(), None);
         // Set it again, then delete the provider.
         s.begin_field(Field::ProviderApiKey(0));
         assert!(s.commit_draft_field("sk-stale-check-2"));
         assert!(s.save_draft(), "{:?}", s.error);
-        assert!(store().get("provider:ollama").unwrap().is_some());
+        let second = s.doc.as_ref().unwrap().config().providers[0]
+            .api_key
+            .clone()
+            .unwrap();
+        let second = awili_config::secrets::parse_secret_ref(&second)
+            .unwrap()
+            .to_string();
+        assert!(store().get(&second).unwrap().is_some());
         s.remove_provider(0);
         assert!(s.save_draft(), "{:?}", s.error);
-        assert_eq!(store().get("provider:ollama").unwrap(), None);
+        assert_eq!(store().get(&second).unwrap(), None);
     }
 
     #[test]

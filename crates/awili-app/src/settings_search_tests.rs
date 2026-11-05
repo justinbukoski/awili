@@ -260,17 +260,32 @@ fn sxd_secret_editor_starts_empty_and_never_shows_the_key(cx: &mut TestAppContex
     let (err, status) = view.update(window, |app, _| {
         (app.settings.error.clone(), app.settings.status.clone())
     });
+    let reference = view.update(window, |app, _| {
+        app.settings
+            .doc
+            .as_ref()
+            .unwrap()
+            .config()
+            .memory
+            .token
+            .clone()
+    });
+    let account = awili_config::secrets::parse_secret_ref(&reference)
+        .expect("the file stores a secret reference");
+    assert!(config_text(&view, window).contains(&format!("token = \"{reference}\"")));
     assert!(
-        config_text(&view, window).contains("token = \"secret:memory\""),
-        "{}\n{err:?} {status:?}",
-        config_text(&view, window)
+        account.starts_with("memory:"),
+        "{reference}\n{err:?} {status:?}"
     );
     assert!(
         !config_text(&view, window).contains("n3w-key"),
         "the typed key is filed in the secret store, not the config"
     );
     assert_eq!(
-        crate::secret_store::store().get("memory").unwrap().as_deref(),
+        crate::secret_store::store()
+            .get(account)
+            .unwrap()
+            .as_deref(),
         Some("n3w-key")
     );
     let text = view.update(window, |app, cx| {

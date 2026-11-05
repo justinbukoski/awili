@@ -69,6 +69,7 @@ pub struct SseDecoder {
     /// The `data:` lines of the event being assembled (SSE: consecutive
     /// data lines of one event, ended by a blank line, join with `\n`).
     event_data: Vec<String>,
+    event_bytes: usize,
     /// `[DONE]`, a typed error or the end of the body ended decoding.
     finished: bool,
 }
@@ -92,8 +93,15 @@ impl SseDecoder {
             return out;
         }
         if let Some(d) = line.strip_prefix("data:") {
-            self.event_data
-                .push(d.strip_prefix(' ').unwrap_or(d).to_string());
+            let d = d.strip_prefix(' ').unwrap_or(d);
+            self.event_bytes = self.event_bytes.saturating_add(d.len()).saturating_add(1);
+            if self.event_bytes > 1024 * 1024 {
+                self.event_data.clear();
+                self.finished = true;
+                out.push(WireDelta::ProviderError { message: "SSE event exceeds size limit".into(), retryable: false });
+                return out;
+            }
+            self.event_data.push(d.to_string());
         }
         if line.trim().is_empty() && !self.event_data.is_empty() {
             // A real blank-line boundary: the pending event arrived COMPLETE.
@@ -125,6 +133,7 @@ impl SseDecoder {
     fn event(&mut self, terminated_by_boundary: bool, out: &mut Vec<WireDelta>) {
         let data = self.event_data.join("\n");
         self.event_data.clear();
+        self.event_bytes = 0;
         let data = data.trim();
         if data == "[DONE]" {
             out.push(WireDelta::StreamEnd);
@@ -345,4 +354,17 @@ struct ErrorView {
     message: String,
     #[serde(default)]
     r#type: Option<String>,
+}
+
+#[cfg(test)]
+mod size_limit_tests {
+    use super::*;
+
+    #[test]
+    fn oversized_event_fails_without_accumulating_more() {
+        let mut decoder = SseDecoder::new();
+        assert!(decoder.push_line(&format!("data: {}", "a".repeat(1024 * 1024))).iter().any(|d| matches!(d, WireDelta::ProviderError { .. })));
+        assert!(decoder.is_finished());
+        assert!(decoder.event_data.is_empty());
+    }
 }
