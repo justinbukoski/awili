@@ -111,6 +111,15 @@ fn first_work_send_renders_without_navigating(cx: &mut gpui::TestAppContext) {
     window.run_until_parked();
     assert!(window.debug_bounds("awili-user-bubble-0").is_none());
     enter(window, "First question");
+    // A first send probes the real stub's /v1/models and /health off-thread.
+    // Parking the deterministic executor does not wait for that HTTP work.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while window.debug_bounds("awili-user-bubble-0").is_none()
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        window.run_until_parked();
+    }
     assert!(
         window.debug_bounds("awili-user-bubble-0").is_some(),
         "the message is not on the page"
